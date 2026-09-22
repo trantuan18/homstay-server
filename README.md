@@ -46,3 +46,5 @@ Expected:
 ## Important
 
 Never commit `.env` or expose `SUPABASE_SERVICE_ROLE_KEY` to the frontend.
+
+# homstay-server
