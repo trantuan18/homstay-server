@@ -1,0 +1,1978 @@
+openapi: 3.0.3
+info:
+  title: Homestay Booking API
+  version: 1.0.0
+  description: Homestay booking backend API. Payment gateway is not integrated; Admin
+    manages manual payment.
+servers:
+- url: http://localhost:3000
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    RegisterRequest:
+      type: object
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@example.com
+        password:
+          type: string
+          format: password
+          example: Admin@123456
+        full_name:
+          type: string
+          example: System Admin
+    LoginRequest:
+      type: object
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@example.com
+        password:
+          type: string
+          format: password
+          example: Admin@123456
+    RefreshRequest:
+      type: object
+      required:
+      - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          example: refresh-token-example
+    ProfilePatch:
+      type: object
+      properties:
+        full_name:
+          type: string
+          example: Nguyen Van Admin
+        phone:
+          type: string
+          example: 0900000000
+        avatar_url:
+          type: string
+          format: uri
+          example: https://example.com/avatar.jpg
+    PropertyRequest:
+      type: object
+      required:
+      - name
+      - slug
+      - city
+      - country
+      properties:
+        name:
+          type: string
+          example: Test Property
+        slug:
+          type: string
+          example: test-property-booking
+        description:
+          type: string
+          example: Property dùng để test booking
+        address:
+          type: string
+          example: 123 Le Loi
+        city:
+          type: string
+          example: Thanh Hoa
+        country:
+          type: string
+          example: Vietnam
+        timezone:
+          type: string
+          example: Asia/Ho_Chi_Minh
+        booking_interval_minutes:
+          type: integer
+          example: 60
+        minimum_booking_minutes:
+          type: integer
+          example: 60
+        maximum_booking_minutes:
+          type: integer
+          example: 1440
+        cancellation_deadline_hours:
+          type: integer
+          example: 24
+        cancellation_fee_percent:
+          type: number
+          example: 0
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - INACTIVE
+          - SUSPENDED
+          example: ACTIVE
+    PropertyPatch:
+      allOf:
+      - $ref: '#/components/schemas/PropertyRequest'
+    RoomRequest:
+      type: object
+      required:
+      - name
+      - slug
+      - capacity
+      - base_hourly_price
+      properties:
+        name:
+          type: string
+          example: Room 01
+        slug:
+          type: string
+          example: room-01
+        description:
+          type: string
+          example: Private room for hourly booking
+        capacity:
+          type: integer
+          example: 4
+        base_hourly_price:
+          type: number
+          example: 150000
+        base_daily_price:
+          type: number
+          example: 1200000
+        status:
+          type: string
+          enum:
+          - AVAILABLE
+          - MAINTENANCE
+          - INACTIVE
+          example: AVAILABLE
+    RoomPatch:
+      allOf:
+      - $ref: '#/components/schemas/RoomRequest'
+    ImageRequest:
+      type: object
+      required:
+      - image_url
+      properties:
+        image_url:
+          type: string
+          format: uri
+          example: https://example.com/room-01.jpg
+        public_id:
+          type: string
+          example: property-id/room-id/room-01.jpg
+        sort_order:
+          type: integer
+          example: 1
+        is_primary:
+          type: boolean
+          example: true
+    AmenityRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+          example: Wi-Fi
+        description:
+          type: string
+          example: High-speed wireless internet
+    RoomAmenityRequest:
+      type: object
+      required:
+      - amenity_id
+      properties:
+        amenity_id:
+          type: string
+          format: uuid
+          example: 8d6f0c90-8b6f-4a2f-9e9b-111111111111
+    PricingRuleRequest:
+      type: object
+      required:
+      - price
+      properties:
+        name:
+          type: string
+          example: Weekend rate
+        day_of_week:
+          type: integer
+          example: 6
+        start_time:
+          type: string
+          example: 08:00:00
+        end_time:
+          type: string
+          example: '22:00:00'
+        min_duration_minutes:
+          type: integer
+          example: 120
+        max_duration_minutes:
+          type: integer
+          example: 1440
+        price:
+          type: number
+          example: 180000
+        priority:
+          type: integer
+          example: 10
+        active:
+          type: boolean
+          example: true
+    BlockedPeriodRequest:
+      type: object
+      required:
+      - start_at
+      - end_at
+      properties:
+        start_at:
+          type: string
+          format: date-time
+          example: '2026-09-20T13:00:00+07:00'
+        end_at:
+          type: string
+          format: date-time
+          example: '2026-09-20T15:00:00+07:00'
+        reason:
+          type: string
+          example: Maintenance
+    BookingRequest:
+      type: object
+      required:
+      - room_id
+      - start_at
+      - end_at
+      - guest_count
+      properties:
+        room_id:
+          type: string
+          format: uuid
+          example: 11111111-1111-4111-8111-111111111111
+        start_at:
+          type: string
+          format: date-time
+          example: '2026-09-20T09:00:00+07:00'
+        end_at:
+          type: string
+          format: date-time
+          example: '2026-09-20T12:00:00+07:00'
+        guest_count:
+          type: integer
+          example: 2
+        guest_name:
+          type: string
+          example: Nguyen Van A
+        guest_phone:
+          type: string
+          example: 0900000000
+        notes:
+          type: string
+          example: Booking created from Admin
+    AdminBookingRequest:
+      allOf:
+      - $ref: '#/components/schemas/BookingRequest'
+      type: object
+      required:
+      - user_id
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          example: ef3dc840-aeb8-4376-8a73-7697358549e2
+    BookingStatusRequest:
+      type: object
+      required:
+      - status
+      properties:
+        status:
+          type: string
+          enum:
+          - CONFIRMED
+          - CANCELLED
+          - EXPIRED
+          - CHECKED_IN
+          - NO_SHOW
+          - CHECKED_OUT
+          example: CONFIRMED
+    PaymentRequest:
+      type: object
+      required:
+      - payment_status
+      properties:
+        payment_status:
+          type: string
+          enum:
+          - UNPAID
+          - PARTIAL
+          - PAID
+          - FAILED
+          - REFUNDED
+          example: PAID
+        amount:
+          type: number
+          example: 450000
+        transaction_id:
+          type: string
+          example: MANUAL-20260920-001
+        provider:
+          type: string
+          example: CASH
+        note:
+          type: string
+          example: Customer paid cash at reception
+    RoleRequest:
+      type: object
+      required:
+      - role
+      properties:
+        role:
+          type: string
+          enum:
+          - CUSTOMER
+          - HOST
+          - STAFF
+          - ADMIN
+          - SUPER_ADMIN
+          example: ADMIN
+    ReviewRequest:
+      type: object
+      required:
+      - rating
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          example: 5
+        comment:
+          type: string
+          example: Clean room and convenient location
+    StatusRequest:
+      type: object
+      required:
+      - status
+      properties:
+        status:
+          type: string
+          enum:
+          - AVAILABLE
+          - MAINTENANCE
+          - INACTIVE
+          example: AVAILABLE
+tags:
+- name: Health
+- name: Auth
+- name: Properties
+- name: Rooms
+- name: Images
+- name: Amenities
+- name: Pricing
+- name: Blocked Periods
+- name: Search & Availability
+- name: Bookings
+- name: Notifications
+- name: Reviews
+- name: Admin
+paths:
+  /health:
+    get:
+      tags:
+      - Health
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example:
+                status: ok
+  /api/auth/register:
+    post:
+      tags:
+      - Auth
+      summary: Register
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                user:
+                  id: 11111111-1111-4111-8111-111111111111
+                  email: admin@example.com
+                message: Registration successful
+        '400':
+          description: Validation/auth error
+          content:
+            application/json:
+              example:
+                success: false
+                message: Validation error
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+  /api/auth/login:
+    post:
+      tags:
+      - Auth
+      summary: Login
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                user:
+                  id: 11111111-1111-4111-8111-111111111111
+                  email: admin@example.com
+                access_token: access-token-example
+                refresh_token: refresh-token-example
+                expires_in: 3600
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                success: false
+                message: Missing access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+  /api/auth/refresh:
+    post:
+      tags:
+      - Auth
+      summary: Refresh access token
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                access_token: new-access-token-example
+                refresh_token: new-refresh-token-example
+                expires_in: 3600
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                success: false
+                message: Missing access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+  /api/auth/logout:
+    post:
+      tags:
+      - Auth
+      security:
+      - bearerAuth: []
+      summary: Logout
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+  /api/auth/me:
+    get:
+      tags:
+      - Auth
+      security:
+      - bearerAuth: []
+      summary: Current user, profile and role
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                user:
+                  id: 11111111-1111-4111-8111-111111111111
+                  email: admin@example.com
+                profile:
+                  id: 11111111-1111-4111-8111-111111111111
+                  full_name: System Admin
+                  phone: null
+                  avatar_url: null
+                role: ADMIN
+    patch:
+      tags:
+      - Auth
+      security:
+      - bearerAuth: []
+      summary: Update current profile
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                user:
+                  id: 11111111-1111-4111-8111-111111111111
+                  email: admin@example.com
+                profile:
+                  id: 11111111-1111-4111-8111-111111111111
+                  full_name: System Admin
+                  phone: null
+                  avatar_url: null
+                role: ADMIN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfilePatch'
+  /api/properties:
+    get:
+      tags:
+      - Properties
+      summary: List active properties
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+    post:
+      tags:
+      - Properties
+      security:
+      - bearerAuth: []
+      summary: Create own property (Host)
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PropertyRequest'
+  /api/properties/{id}:
+    get:
+      tags:
+      - Properties
+      summary: Get active property
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+    patch:
+      tags:
+      - Properties
+      security:
+      - bearerAuth: []
+      summary: Update own property (Host)
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PropertyPatch'
+    delete:
+      tags:
+      - Properties
+      security:
+      - bearerAuth: []
+      summary: Soft-delete own property (Host)
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        example: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+  /api/rooms:
+    get:
+      tags:
+      - Rooms
+      summary: List available rooms
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+  /api/rooms/{id}:
+    get:
+      tags:
+      - Rooms
+      summary: Get room
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+    patch:
+      tags:
+      - Rooms
+      security:
+      - bearerAuth: []
+      summary: Update own room (Host)
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomPatch'
+    delete:
+      tags:
+      - Rooms
+      security:
+      - bearerAuth: []
+      summary: Soft-delete own room (Host)
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+  /api/properties/{propertyId}/rooms:
+    post:
+      tags:
+      - Rooms
+      security:
+      - bearerAuth: []
+      summary: Create room in own property (Host)
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomRequest'
+  /api/rooms/{roomId}/images:
+    get:
+      tags:
+      - Images
+      summary: List room images
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+    post:
+      tags:
+      - Images
+      security:
+      - bearerAuth: []
+      summary: Add image record (Host)
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageRequest'
+  /api/rooms/{roomId}/images/{imageId}:
+    patch:
+      tags:
+      - Images
+      security:
+      - bearerAuth: []
+      summary: Update image record
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+    delete:
+      tags:
+      - Images
+      security:
+      - bearerAuth: []
+      summary: Delete image record
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+  /api/admin/rooms/{roomId}/images/upload:
+    post:
+      tags:
+      - Images
+      security:
+      - bearerAuth: []
+      summary: Admin upload room image
+      description: Multipart field `file`, max 5 MB, JPG/PNG/WEBP.
+      responses:
+        '201':
+          description: Uploaded
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+        '403':
+          description: Admin required
+          content:
+            application/json:
+              example:
+                success: false
+                message: ADMIN_REQUIRED
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+            encoding:
+              file:
+                contentType: image/jpeg, image/png, image/webp
+  /api/admin/rooms/{roomId}/images/{imageId}:
+    patch:
+      tags:
+      - Images
+      security:
+      - bearerAuth: []
+      summary: Admin set sort order / primary image
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+    delete:
+      tags:
+      - Images
+      security:
+      - bearerAuth: []
+      summary: Admin delete Storage object and DB record
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+  /api/amenities:
+    get:
+      tags:
+      - Amenities
+      summary: List amenities
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 8d6f0c90-8b6f-4a2f-9e9b-111111111111
+                  name: Wi-Fi
+    post:
+      tags:
+      - Amenities
+      security:
+      - bearerAuth: []
+      summary: Create amenity (Host)
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 8d6f0c90-8b6f-4a2f-9e9b-111111111111
+                  name: Wi-Fi
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmenityRequest'
+  /api/rooms/{roomId}/amenities:
+    get:
+      tags:
+      - Amenities
+      summary: List room amenities
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+    post:
+      tags:
+      - Amenities
+      security:
+      - bearerAuth: []
+      summary: Attach amenity (Host)
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomAmenityRequest'
+  /api/rooms/{roomId}/amenities/{amenityId}:
+    delete:
+      tags:
+      - Amenities
+      security:
+      - bearerAuth: []
+      summary: Detach amenity (Host)
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+  /api/rooms/{roomId}/pricing-rules:
+    get:
+      tags:
+      - Pricing
+      summary: List pricing rules
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 44444444-4444-4444-8444-444444444444
+                  name: Weekend rate
+                  price: 180000
+                  priority: 10
+                  active: true
+    post:
+      tags:
+      - Pricing
+      security:
+      - bearerAuth: []
+      summary: Create pricing rule (Host)
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 44444444-4444-4444-8444-444444444444
+                  name: Weekend rate
+                  price: 180000
+                  priority: 10
+                  active: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingRuleRequest'
+  /api/rooms/{roomId}/pricing-rules/{ruleId}:
+    patch:
+      tags:
+      - Pricing
+      security:
+      - bearerAuth: []
+      summary: Update pricing rule (Host)
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 44444444-4444-4444-8444-444444444444
+                  name: Weekend rate
+                  price: 180000
+                  priority: 10
+                  active: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PricingRuleRequest'
+    delete:
+      tags:
+      - Pricing
+      security:
+      - bearerAuth: []
+      summary: Delete pricing rule (Host)
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 44444444-4444-4444-8444-444444444444
+                  name: Weekend rate
+                  price: 180000
+                  priority: 10
+                  active: true
+  /api/rooms/{roomId}/blocked-periods:
+    get:
+      tags:
+      - Blocked Periods
+      security:
+      - bearerAuth: []
+      summary: List blocked periods
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 22222222-2222-4222-8222-222222222222
+                  room_id: 11111111-1111-4111-8111-111111111111
+                  start_at: '2026-09-20T13:00:00+07:00'
+                  end_at: '2026-09-20T15:00:00+07:00'
+                  reason: Maintenance
+    post:
+      tags:
+      - Blocked Periods
+      security:
+      - bearerAuth: []
+      summary: Create blocked period
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 22222222-2222-4222-8222-222222222222
+                  room_id: 11111111-1111-4111-8111-111111111111
+                  start_at: '2026-09-20T13:00:00+07:00'
+                  end_at: '2026-09-20T15:00:00+07:00'
+                  reason: Maintenance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockedPeriodRequest'
+  /api/rooms/{roomId}/blocked-periods/{blockedId}:
+    patch:
+      tags:
+      - Blocked Periods
+      security:
+      - bearerAuth: []
+      summary: Update blocked period
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 22222222-2222-4222-8222-222222222222
+                  room_id: 11111111-1111-4111-8111-111111111111
+                  start_at: '2026-09-20T13:00:00+07:00'
+                  end_at: '2026-09-20T15:00:00+07:00'
+                  reason: Maintenance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockedPeriodRequest'
+    delete:
+      tags:
+      - Blocked Periods
+      security:
+      - bearerAuth: []
+      summary: Delete blocked period
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 22222222-2222-4222-8222-222222222222
+                  room_id: 11111111-1111-4111-8111-111111111111
+                  start_at: '2026-09-20T13:00:00+07:00'
+                  end_at: '2026-09-20T15:00:00+07:00'
+                  reason: Maintenance
+  /api/search/properties:
+    get:
+      tags:
+      - Search & Availability
+      summary: Search properties
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+  /api/search/rooms:
+    get:
+      tags:
+      - Search & Availability
+      summary: Search rooms
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+  /api/search/rooms/available:
+    get:
+      tags:
+      - Search & Availability
+      summary: Search rooms available for a time range
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+  /api/rooms/{roomId}/availability:
+    get:
+      tags:
+      - Search & Availability
+      summary: Check room availability
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                available: true
+                reason: null
+  /api/bookings:
+    get:
+      tags:
+      - Bookings
+      security:
+      - bearerAuth: []
+      summary: List own bookings
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+    post:
+      tags:
+      - Bookings
+      security:
+      - bearerAuth: []
+      summary: Customer create booking
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingRequest'
+  /api/bookings/price:
+    get:
+      tags:
+      - Bookings
+      security:
+      - bearerAuth: []
+      summary: Calculate booking price
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+  /api/bookings/{id}:
+    get:
+      tags:
+      - Bookings
+      security:
+      - bearerAuth: []
+      summary: Get own booking
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+  /api/bookings/{id}/detail:
+    get:
+      tags:
+      - Bookings
+      security:
+      - bearerAuth: []
+      summary: Booking detail with related data
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+  /api/bookings/{id}/cancel:
+    post:
+      tags:
+      - Bookings
+      security:
+      - bearerAuth: []
+      summary: Cancel own booking
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+  /api/notifications:
+    get:
+      tags:
+      - Notifications
+      security:
+      - bearerAuth: []
+      summary: List own notifications
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+  /api/notifications/{id}:
+    get:
+      tags:
+      - Notifications
+      security:
+      - bearerAuth: []
+      summary: Get own notification
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+  /api/notifications/{id}/read:
+    patch:
+      tags:
+      - Notifications
+      security:
+      - bearerAuth: []
+      summary: Mark notification read
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+  /api/notifications/read-all:
+    patch:
+      tags:
+      - Notifications
+      security:
+      - bearerAuth: []
+      summary: Mark all notifications read
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+  /api/rooms/{roomId}/reviews:
+    get:
+      tags:
+      - Reviews
+      summary: List published reviews
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+  /api/reviews/{id}:
+    get:
+      tags:
+      - Reviews
+      summary: Get review
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                review:
+                  id: 33333333-3333-4333-8333-333333333333
+                  rating: 5
+                  comment: Clean room
+                  status: PUBLISHED
+    patch:
+      tags:
+      - Reviews
+      security:
+      - bearerAuth: []
+      summary: Update own review
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                review:
+                  id: 33333333-3333-4333-8333-333333333333
+                  rating: 5
+                  comment: Clean room
+                  status: PUBLISHED
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+  /api/bookings/{bookingId}/review:
+    post:
+      tags:
+      - Reviews
+      security:
+      - bearerAuth: []
+      summary: Create review after checkout
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+  /api/admin/dashboard:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Dashboard summary
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                bookings:
+                  PENDING: 2
+                  CONFIRMED: 5
+                  CHECKED_IN: 1
+                  CHECKED_OUT: 20
+                payments:
+                  UNPAID: 2
+                  PAID: 25
+                revenue:
+                  total: 12500000
+                  currency: VND
+                properties: 5
+                rooms: 18
+        '403':
+          description: Admin required
+          content:
+            application/json:
+              example:
+                success: false
+                message: ADMIN_REQUIRED
+  /api/admin/analytics:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Booking/revenue analytics
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                bookings: 31
+                revenue: 12500000
+                currency: VND
+  /api/admin/analytics/occupancy:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Occupancy analytics
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                occupancy_percent: 68.42
+                occupied_minutes: 28800
+                available_minutes: 42000
+  /api/admin/properties:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: List properties
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+    post:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Create property
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PropertyRequest'
+  /api/admin/properties/{id}:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Get property
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+    patch:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Update property
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PropertyPatch'
+    delete:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Soft-delete property
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+  /api/admin/rooms:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: List rooms
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+  /api/admin/rooms/{id}:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Get room
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+    patch:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Update room
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomPatch'
+  /api/admin/rooms/{id}/status:
+    patch:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Update room status
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatusRequest'
+  /api/admin/properties/{propertyId}/rooms:
+    post:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Create room
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                room:
+                  id: 11111111-1111-4111-8111-111111111111
+                  property_id: 49036dbf-b863-42b9-aaf6-2d0285dfb422
+                  name: Room 01
+                  status: AVAILABLE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomRequest'
+  /api/admin/bookings:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: List bookings
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+    post:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Create booking for customer
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminBookingRequest'
+  /api/admin/bookings/{id}:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Get booking
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+  /api/admin/bookings/{id}/status:
+    patch:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Update booking status
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingStatusRequest'
+  /api/admin/bookings/{bookingId}/payments:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: List booking payments
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+  /api/admin/bookings/{bookingId}/payment:
+    patch:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Record/update manual payment
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                booking:
+                  id: 22222222-2222-4222-8222-222222222222
+                  booking_code: BK-20260920-0001
+                  status: PENDING
+                  payment_status: UNPAID
+                  total: 450000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+  /api/admin/users:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: List users
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 11111111-1111-4111-8111-111111111111
+                  email: customer@example.com
+                  full_name: Nguyen Van A
+                  role: CUSTOMER
+  /api/admin/users/{id}:
+    get:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Get user
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 11111111-1111-4111-8111-111111111111
+                  email: customer@example.com
+                  full_name: Nguyen Van A
+                  role: CUSTOMER
+    patch:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Change user role
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                - id: 11111111-1111-4111-8111-111111111111
+                  email: customer@example.com
+                  full_name: Nguyen Van A
+                  role: CUSTOMER
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleRequest'

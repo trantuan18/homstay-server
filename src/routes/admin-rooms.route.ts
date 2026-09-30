@@ -1,27 +1,18 @@
-import type { FastifyInstance } from 'fastify';
-import { authenticate } from '../middleware/auth.js';
-import {
-  supabaseAdmin,
-  createUserSupabaseClient,
-} from '../lib/supabase.js';
+import type { FastifyInstance } from "fastify";
+import { authenticate } from "../middleware/auth.js";
+import { supabaseAdmin, createUserSupabaseClient } from "../lib/supabase.js";
 
-export async function adminRoomsRoute(
-  app: FastifyInstance,
-) {
+export async function adminRoomsRoute(app: FastifyInstance) {
   // =========================================================
   // ADMIN CHECK
   // =========================================================
-  async function requireAdmin(
-    accessToken: string,
-  ) {
-    const userClient =
-      createUserSupabaseClient(accessToken);
+  async function requireAdmin(accessToken: string) {
+    const userClient = createUserSupabaseClient(accessToken);
 
-    const { data, error } =
-      await userClient.rpc('is_admin');
+    const { data, error } = await userClient.rpc("is_admin");
 
     if (error || data !== true) {
-      throw new Error('ADMIN_REQUIRED');
+      throw new Error("ADMIN_REQUIRED");
     }
   }
 
@@ -30,18 +21,16 @@ export async function adminRoomsRoute(
   // GET /api/admin/rooms
   // =========================================================
   app.get(
-    '/api/admin/rooms',
+    "/api/admin/rooms",
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
@@ -55,21 +44,12 @@ export async function adminRoomsRoute(
           offset?: string;
         };
 
-        const limit = Math.min(
-          Math.max(
-            Number(query.limit ?? 20),
-            1,
-          ),
-          100,
-        );
+        const limit = Math.min(Math.max(Number(query.limit ?? 20), 1), 100);
 
-        const offset = Math.max(
-          Number(query.offset ?? 0),
-          0,
-        );
+        const offset = Math.max(Number(query.offset ?? 0), 0);
 
         let dbQuery = supabaseAdmin
-          .from('rooms')
+          .from("rooms")
           .select(
             `
             id,
@@ -92,28 +72,19 @@ export async function adminRoomsRoute(
               owner_id
             )
           `,
-            { count: 'exact' },
+            { count: "exact" },
           )
-          .order('created_at', {
+          .order("created_at", {
             ascending: false,
           })
-          .range(
-            offset,
-            offset + limit - 1,
-          );
+          .range(offset, offset + limit - 1);
 
         if (query.property_id) {
-          dbQuery = dbQuery.eq(
-            'property_id',
-            query.property_id,
-          );
+          dbQuery = dbQuery.eq("property_id", query.property_id);
         }
 
         if (query.status) {
-          dbQuery = dbQuery.eq(
-            'status',
-            query.status,
-          );
+          dbQuery = dbQuery.eq("status", query.status);
         }
 
         if (query.search?.trim()) {
@@ -122,17 +93,12 @@ export async function adminRoomsRoute(
           );
         }
 
-        const {
-          data,
-          error,
-          count,
-        } = await dbQuery;
+        const { data, error, count } = await dbQuery;
 
         if (error) {
           return reply.status(400).send({
             success: false,
-            message:
-              'Failed to get rooms',
+            message: "Failed to get rooms",
             error: error.message,
           });
         }
@@ -147,22 +113,16 @@ export async function adminRoomsRoute(
           },
         };
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },
@@ -173,33 +133,27 @@ export async function adminRoomsRoute(
   // GET /api/admin/rooms/:id
   // =========================================================
   app.get(
-    '/api/admin/rooms/:id',
+    "/api/admin/rooms/:id",
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
         await requireAdmin(token);
 
-        const { id } =
-          request.params as {
-            id: string;
-          };
+        const { id } = request.params as {
+          id: string;
+        };
 
-        const {
-          data,
-          error,
-        } = await supabaseAdmin
-          .from('rooms')
+        const { data, error } = await supabaseAdmin
+          .from("rooms")
           .select(
             `
             *,
@@ -236,16 +190,23 @@ export async function adminRoomsRoute(
               price,
               priority,
               active
+            ),
+            blocked_periods (
+              id,
+              start_at,
+              end_at,
+              reason,
+              created_at
             )
           `,
           )
-          .eq('id', id)
+          .eq("id", id)
           .single();
 
         if (error) {
           return reply.status(404).send({
             success: false,
-            message: 'Room not found',
+            message: "Room not found",
           });
         }
 
@@ -254,22 +215,16 @@ export async function adminRoomsRoute(
           data,
         };
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },
@@ -280,102 +235,74 @@ export async function adminRoomsRoute(
   // POST /api/admin/properties/:propertyId/rooms
   // =========================================================
   app.post(
-    '/api/admin/properties/:propertyId/rooms',
+    "/api/admin/properties/:propertyId/rooms",
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
         await requireAdmin(token);
 
-        const {
-          propertyId,
-        } = request.params as {
+        const { propertyId } = request.params as {
           propertyId: string;
         };
 
-        const body =
-          request.body as any;
+        const body = request.body as any;
 
         if (!body.name?.trim()) {
           return reply.status(400).send({
             success: false,
-            message:
-              'name is required',
+            message: "name is required",
           });
         }
 
         if (!body.slug?.trim()) {
           return reply.status(400).send({
             success: false,
-            message:
-              'slug is required',
+            message: "slug is required",
           });
         }
 
-        const capacity = Number(
-          body.capacity ?? 2,
-        );
+        const capacity = Number(body.capacity ?? 2);
 
-        if (
-          Number.isNaN(capacity) ||
-          capacity <= 0
-        ) {
+        if (Number.isNaN(capacity) || capacity <= 0) {
           return reply.status(400).send({
             success: false,
-            message:
-              'capacity must be greater than 0',
+            message: "capacity must be greater than 0",
           });
         }
 
-        const {
-          data: property,
-          error: propertyError,
-        } = await supabaseAdmin
-          .from('properties')
-          .select('id')
-          .eq('id', propertyId)
+        const { data: property, error: propertyError } = await supabaseAdmin
+          .from("properties")
+          .select("id")
+          .eq("id", propertyId)
           .single();
 
-        if (
-          propertyError ||
-          !property
-        ) {
+        if (propertyError || !property) {
           return reply.status(404).send({
             success: false,
-            message:
-              'Property not found',
+            message: "Property not found",
           });
         }
 
-        const {
-          data,
-          error,
-        } = await supabaseAdmin
-          .from('rooms')
+        const { data, error } = await supabaseAdmin
+          .from("rooms")
           .insert({
             property_id: propertyId,
             name: body.name.trim(),
             slug: body.slug.trim(),
-            description:
-              body.description ?? null,
+            description: body.description ?? null,
             capacity,
-            base_hourly_price:
-              body.base_hourly_price ?? 0,
-            base_daily_price:
-              body.base_daily_price ?? 0,
-            status:
-              body.status ??
-              'AVAILABLE',
+            base_hourly_price: body.base_hourly_price ?? 0,
+            base_daily_price: body.base_daily_price ?? 0,
+            status: body.status ?? "AVAILABLE",
           })
           .select()
           .single();
@@ -383,8 +310,7 @@ export async function adminRoomsRoute(
         if (error) {
           return reply.status(400).send({
             success: false,
-            message:
-              'Failed to create room',
+            message: "Failed to create room",
             error: error.message,
           });
         }
@@ -394,22 +320,16 @@ export async function adminRoomsRoute(
           data,
         });
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },
@@ -420,111 +340,82 @@ export async function adminRoomsRoute(
   // PATCH /api/admin/rooms/:id
   // =========================================================
   app.patch(
-    '/api/admin/rooms/:id',
+    "/api/admin/rooms/:id",
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
         await requireAdmin(token);
 
-        const { id } =
-          request.params as {
-            id: string;
-          };
+        const { id } = request.params as {
+          id: string;
+        };
 
-        const body =
-          request.body as any;
+        const body = request.body as any;
 
         const allowedFields = [
-          'property_id',
-          'name',
-          'slug',
-          'description',
-          'capacity',
-          'base_hourly_price',
-          'base_daily_price',
-          'status',
+          "property_id",
+          "name",
+          "slug",
+          "description",
+          "capacity",
+          "base_hourly_price",
+          "base_daily_price",
+          "status",
         ];
 
-        const payload: Record<
-          string,
-          any
-        > = {};
+        const payload: Record<string, any> = {};
 
         for (const field of allowedFields) {
-          if (
-            body[field] !== undefined
-          ) {
+          if (body[field] !== undefined) {
             payload[field] =
-              typeof body[field] ===
-              'string'
+              typeof body[field] === "string"
                 ? body[field].trim()
                 : body[field];
           }
         }
 
-        if (
-          payload.capacity !==
-          undefined
-        ) {
-          const capacity = Number(
-            payload.capacity,
-          );
+        if (payload.capacity !== undefined) {
+          const capacity = Number(payload.capacity);
 
-          if (
-            Number.isNaN(capacity) ||
-            capacity <= 0
-          ) {
+          if (Number.isNaN(capacity) || capacity <= 0) {
             return reply.status(400).send({
               success: false,
-              message:
-                'capacity must be greater than 0',
+              message: "capacity must be greater than 0",
             });
           }
 
-          payload.capacity =
-            capacity;
+          payload.capacity = capacity;
         }
 
-        if (
-          Object.keys(payload)
-            .length === 0
-        ) {
+        if (Object.keys(payload).length === 0) {
           return reply.status(400).send({
             success: false,
-            message:
-              'No fields to update',
+            message: "No fields to update",
           });
         }
 
-        payload.updated_at =
-          new Date().toISOString();
+        payload.updated_at = new Date().toISOString();
 
-        const {
-          data,
-          error,
-        } = await supabaseAdmin
-          .from('rooms')
+        const { data, error } = await supabaseAdmin
+          .from("rooms")
           .update(payload)
-          .eq('id', id)
+          .eq("id", id)
           .select()
           .single();
 
         if (error) {
           return reply.status(400).send({
             success: false,
-            message:
-              'Failed to update room',
+            message: "Failed to update room",
             error: error.message,
           });
         }
@@ -534,22 +425,16 @@ export async function adminRoomsRoute(
           data,
         };
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },
@@ -560,97 +445,71 @@ export async function adminRoomsRoute(
   // PATCH /api/admin/rooms/:id/status
   // =========================================================
   app.patch(
-    '/api/admin/rooms/:id/status',
+    "/api/admin/rooms/:id/status",
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
         await requireAdmin(token);
 
-        const { id } =
-          request.params as {
-            id: string;
-          };
+        const { id } = request.params as {
+          id: string;
+        };
 
-        const body =
-          request.body as {
-            status?: string;
-          };
+        const body = request.body as {
+          status?: string;
+        };
 
-        const allowedStatuses = [
-          'AVAILABLE',
-          'MAINTENANCE',
-          'INACTIVE',
-        ];
+        const allowedStatuses = ["AVAILABLE", "MAINTENANCE", "INACTIVE"];
 
-        if (
-          !body.status ||
-          !allowedStatuses.includes(
-            body.status,
-          )
-        ) {
+        if (!body.status || !allowedStatuses.includes(body.status)) {
           return reply.status(400).send({
             success: false,
-            message:
-              'Invalid room status',
+            message: "Invalid room status",
           });
         }
 
-        const {
-          data,
-          error,
-        } = await supabaseAdmin
-          .from('rooms')
+        const { data, error } = await supabaseAdmin
+          .from("rooms")
           .update({
             status: body.status,
-            updated_at:
-              new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           })
-          .eq('id', id)
+          .eq("id", id)
           .select()
           .single();
 
         if (error) {
           return reply.status(404).send({
             success: false,
-            message:
-              'Room not found',
+            message: "Room not found",
           });
         }
 
         return {
           success: true,
-          message:
-            'Room status updated successfully',
+          message: "Room status updated successfully",
           data,
         };
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },

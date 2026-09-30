@@ -1,7 +1,7 @@
-import { FastifyInstance } from 'fastify';
-import { z } from 'zod';
-import { supabase, createUserSupabaseClient } from '../lib/supabase.js';
-import { authenticate } from '../middleware/auth.js';
+import { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { supabase, createUserSupabaseClient } from "../lib/supabase.js";
+import { authenticate } from "../middleware/auth.js";
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -28,13 +28,13 @@ export async function authRoute(app: FastifyInstance) {
   // =========================================================
   // REGISTER
   // =========================================================
-  app.post('/api/auth/register', async (request, reply) => {
+  app.post("/api/auth/register", async (request, reply) => {
     const parsed = registerSchema.safeParse(request.body);
 
     if (!parsed.success) {
       return reply.code(400).send({
         success: false,
-        message: 'Invalid request',
+        message: "Invalid request",
         errors: parsed.error.flatten(),
       });
     }
@@ -61,8 +61,8 @@ export async function authRoute(app: FastifyInstance) {
     return reply.code(201).send({
       success: true,
       message: data.session
-        ? 'Registration successful'
-        : 'Registration successful. Please confirm your email.',
+        ? "Registration successful"
+        : "Registration successful. Please confirm your email.",
       user: data.user,
       session: data.session,
       email_confirmation_required: !data.session,
@@ -72,13 +72,26 @@ export async function authRoute(app: FastifyInstance) {
   // =========================================================
   // LOGIN
   // =========================================================
-  app.post('/api/auth/login', async (request, reply) => {
+  app.post("/api/auth/login", async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body);
 
     if (!parsed.success) {
+      request.log.warn(
+        {
+          event: "auth.login.validation_failed",
+          requestId: request.id,
+          issues: parsed.error.issues.map(({ path, code, message }) => ({
+            path,
+            code,
+            message,
+          })),
+        },
+        "Login request validation failed",
+      );
+
       return reply.code(400).send({
         success: false,
-        message: 'Invalid request',
+        message: "Invalid request",
         errors: parsed.error.flatten(),
       });
     }
@@ -91,15 +104,40 @@ export async function authRoute(app: FastifyInstance) {
     });
 
     if (error) {
+      request.log.warn(
+        {
+          event: "auth.login.failed",
+          requestId: request.id,
+          email,
+          supabaseError: {
+            name: error.name,
+            message: error.message,
+            status: error.status,
+            code: error.code,
+          },
+        },
+        "Supabase login failed",
+      );
+
       return reply.code(401).send({
         success: false,
         message: error.message,
       });
     }
 
+    request.log.info(
+      {
+        event: "auth.login.succeeded",
+        requestId: request.id,
+        email,
+        userId: data.user?.id,
+      },
+      "Login succeeded",
+    );
+
     return reply.send({
       success: true,
-      message: 'Login successful',
+      message: "Login successful",
       user: data.user,
       session: data.session,
       access_token: data.session.access_token,
@@ -110,13 +148,13 @@ export async function authRoute(app: FastifyInstance) {
   // =========================================================
   // REFRESH TOKEN
   // =========================================================
-  app.post('/api/auth/refresh', async (request, reply) => {
+  app.post("/api/auth/refresh", async (request, reply) => {
     const parsed = refreshSchema.safeParse(request.body);
 
     if (!parsed.success) {
       return reply.code(400).send({
         success: false,
-        message: 'Refresh token is required',
+        message: "Refresh token is required",
       });
     }
 
@@ -129,13 +167,13 @@ export async function authRoute(app: FastifyInstance) {
     if (error || !data.session) {
       return reply.code(401).send({
         success: false,
-        message: error?.message ?? 'Invalid refresh token',
+        message: error?.message ?? "Invalid refresh token",
       });
     }
 
     return reply.send({
       success: true,
-      message: 'Token refreshed successfully',
+      message: "Token refreshed successfully",
       user: data.user,
       session: data.session,
       access_token: data.session.access_token,
@@ -147,17 +185,17 @@ export async function authRoute(app: FastifyInstance) {
   // LOGOUT
   // =========================================================
   app.post(
-    '/api/auth/logout',
+    "/api/auth/logout",
     {
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const token = request.headers.authorization?.replace('Bearer ', '');
+      const token = request.headers.authorization?.replace("Bearer ", "");
 
       if (!token) {
         return reply.code(401).send({
           success: false,
-          message: 'Missing access token',
+          message: "Missing access token",
         });
       }
 
@@ -174,7 +212,7 @@ export async function authRoute(app: FastifyInstance) {
 
       return reply.send({
         success: true,
-        message: 'Logout successful',
+        message: "Logout successful",
       });
     },
   );
@@ -183,17 +221,17 @@ export async function authRoute(app: FastifyInstance) {
   // GET CURRENT USER
   // =========================================================
   app.get(
-    '/api/auth/me',
+    "/api/auth/me",
     {
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const token = request.headers.authorization?.replace('Bearer ', '');
+      const token = request.headers.authorization?.replace("Bearer ", "");
 
       if (!token) {
         return reply.code(401).send({
           success: false,
-          message: 'Missing access token',
+          message: "Missing access token",
         });
       }
 
@@ -207,14 +245,14 @@ export async function authRoute(app: FastifyInstance) {
       if (userError || !user) {
         return reply.code(401).send({
           success: false,
-          message: userError?.message ?? 'Unauthorized',
+          message: userError?.message ?? "Unauthorized",
         });
       }
 
       const { data: profile, error: profileError } = await userClient
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
         .single();
 
       if (profileError) {
@@ -225,9 +263,9 @@ export async function authRoute(app: FastifyInstance) {
       }
 
       const { data: role, error: roleError } = await userClient
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', user.id)
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id)
         .single();
 
       if (roleError) {
@@ -241,7 +279,7 @@ export async function authRoute(app: FastifyInstance) {
         success: true,
         user,
         profile,
-        role: role?.role ?? 'CUSTOMER',
+        role: role?.role ?? "CUSTOMER",
       });
     },
   );
@@ -250,7 +288,7 @@ export async function authRoute(app: FastifyInstance) {
   // UPDATE CURRENT PROFILE
   // =========================================================
   app.patch(
-    '/api/auth/me',
+    "/api/auth/me",
     {
       preHandler: authenticate,
     },
@@ -260,17 +298,17 @@ export async function authRoute(app: FastifyInstance) {
       if (!parsed.success) {
         return reply.code(400).send({
           success: false,
-          message: 'Invalid request',
+          message: "Invalid request",
           errors: parsed.error.flatten(),
         });
       }
 
-      const token = request.headers.authorization?.replace('Bearer ', '');
+      const token = request.headers.authorization?.replace("Bearer ", "");
 
       if (!token) {
         return reply.code(401).send({
           success: false,
-          message: 'Missing access token',
+          message: "Missing access token",
         });
       }
 
@@ -284,7 +322,7 @@ export async function authRoute(app: FastifyInstance) {
       if (userError || !user) {
         return reply.code(401).send({
           success: false,
-          message: 'Unauthorized',
+          message: "Unauthorized",
         });
       }
 
@@ -294,9 +332,9 @@ export async function authRoute(app: FastifyInstance) {
       };
 
       const { data: profile, error: profileError } = await userClient
-        .from('profiles')
+        .from("profiles")
         .update(updateData)
-        .eq('id', user.id)
+        .eq("id", user.id)
         .select()
         .single();
 
@@ -318,7 +356,7 @@ export async function authRoute(app: FastifyInstance) {
 
       return reply.send({
         success: true,
-        message: 'Profile updated successfully',
+        message: "Profile updated successfully",
         user,
         profile,
       });
