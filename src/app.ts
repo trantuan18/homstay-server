@@ -28,7 +28,10 @@ import { adminPropertiesRoute,} from './routes/admin-properties.route.js';
 import { adminRoomsRoute,} from './routes/admin-rooms.route.js';
 import { adminDashboardRoute } from './routes/admin-dashboard.route.js';
 import { adminAnalyticsRoute } from './routes/admin-analytics.route.js';
+import { notificationsRoute } from './routes/notifications.route.js';
+import { adminAuditLogsRoute } from './routes/admin-audit-logs.route.js';
 import { adminOccupancyRoute } from './routes/admin-occupancy.route.js';
+import { adminPricingPlansRoute } from './routes/admin-pricing-plans.route.js';
 export async function buildApp() {
   const app = Fastify({
     logger: true,
@@ -95,6 +98,10 @@ export async function buildApp() {
   await app.register(adminAnalyticsRoute);
   await app.register(adminOccupancyRoute);
 
+  await app.register(notificationsRoute);
+  await app.register(adminAuditLogsRoute);
+  await app.register(adminPricingPlansRoute);
   await app.register(searchRoute);
   return app;
 }
+

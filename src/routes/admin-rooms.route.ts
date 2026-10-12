@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { authenticate } from "../middleware/auth.js";
 import { supabaseAdmin, createUserSupabaseClient } from "../lib/supabase.js";
+import { pricingPlanService } from "../services/pricing-plan.service.js";
 
 export async function adminRoomsRoute(app: FastifyInstance) {
   // =========================================================
@@ -270,14 +271,7 @@ export async function adminRoomsRoute(app: FastifyInstance) {
           });
         }
 
-        const capacity = Number(body.capacity ?? 2);
-
-        if (Number.isNaN(capacity) || capacity <= 0) {
-          return reply.status(400).send({
-            success: false,
-            message: "capacity must be greater than 0",
-          });
-        }
+        const capacity = Number(body.capacity) > 0 ? Number(body.capacity) : 2;
 
         const { data: property, error: propertyError } = await supabaseAdmin
           .from("properties")
@@ -292,6 +286,22 @@ export async function adminRoomsRoute(app: FastifyInstance) {
           });
         }
 
+        const plan = pricingPlanService.getPropertyPlan(propertyId);
+        const hourlyRate =
+          body.base_hourly_price && body.base_hourly_price > 0
+            ? Number(body.base_hourly_price)
+            : plan
+              ? Math.round(
+                  plan.hourly_first_price / Math.max(1, plan.hourly_first_hours),
+                )
+              : 0;
+        const dailyRate =
+          body.base_daily_price && body.base_daily_price > 0
+            ? Number(body.base_daily_price)
+            : plan
+              ? plan.daily_weekday_price
+              : 0;
+
         const { data, error } = await supabaseAdmin
           .from("rooms")
           .insert({
@@ -300,8 +310,8 @@ export async function adminRoomsRoute(app: FastifyInstance) {
             slug: body.slug.trim(),
             description: body.description ?? null,
             capacity,
-            base_hourly_price: body.base_hourly_price ?? 0,
-            base_daily_price: body.base_daily_price ?? 0,
+            base_hourly_price: hourlyRate,
+            base_daily_price: dailyRate,
             status: body.status ?? "AVAILABLE",
           })
           .select()
@@ -313,6 +323,10 @@ export async function adminRoomsRoute(app: FastifyInstance) {
             message: "Failed to create room",
             error: error.message,
           });
+        }
+
+        if (plan) {
+          await pricingPlanService.syncPropertyPlanToDatabase(propertyId);
         }
 
         return reply.status(201).send({
@@ -385,15 +399,11 @@ export async function adminRoomsRoute(app: FastifyInstance) {
 
         if (payload.capacity !== undefined) {
           const capacity = Number(payload.capacity);
-
-          if (Number.isNaN(capacity) || capacity <= 0) {
-            return reply.status(400).send({
-              success: false,
-              message: "capacity must be greater than 0",
-            });
+          if (!Number.isNaN(capacity) && capacity > 0) {
+            payload.capacity = capacity;
+          } else {
+            delete payload.capacity;
           }
-
-          payload.capacity = capacity;
         }
 
         if (Object.keys(payload).length === 0) {

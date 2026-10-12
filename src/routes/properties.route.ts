@@ -1,11 +1,21 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from "fastify";
 
-import {
-  supabase,
-  createUserSupabaseClient,
-} from '../lib/supabase.js';
+import { supabase, createUserSupabaseClient } from "../lib/supabase.js";
+import { describePropertyUpdateError } from "../lib/property-update-error.js";
 
-import { authenticate } from '../middleware/auth.js';
+import { authenticate } from "../middleware/auth.js";
+
+const UNLIMITED_BOOKING_MINUTES = 2_147_483_647;
+
+function generateSlug(name: string): string {
+  const base = name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${base || "property"}-${Date.now().toString(36)}`;
+}
 
 export async function propertiesRoute(app: FastifyInstance) {
   /**
@@ -14,10 +24,11 @@ export async function propertiesRoute(app: FastifyInstance) {
    * Public:
    * - Chỉ lấy property ACTIVE
    */
-  app.get('/api/properties', async (_request, reply) => {
+  app.get("/api/properties", async (_request, reply) => {
     const { data, error } = await supabase
-      .from('properties')
-      .select(`
+      .from("properties")
+      .select(
+        `
         id,
         owner_id,
         name,
@@ -39,14 +50,15 @@ export async function propertiesRoute(app: FastifyInstance) {
         status,
         created_at,
         updated_at
-      `)
-      .eq('status', 'ACTIVE')
-      .order('created_at', { ascending: false });
+      `,
+      )
+      .eq("status", "ACTIVE")
+      .order("created_at", { ascending: false });
 
     if (error) {
       return reply.status(500).send({
         success: false,
-        message: 'Failed to fetch properties',
+        message: "Failed to fetch properties",
         error: error.message,
       });
     }
@@ -63,14 +75,15 @@ export async function propertiesRoute(app: FastifyInstance) {
    * Public:
    * - Chỉ lấy property ACTIVE
    */
-  app.get('/api/properties/:id', async (request, reply) => {
+  app.get("/api/properties/:id", async (request, reply) => {
     const { id } = request.params as {
       id: string;
     };
 
     const { data, error } = await supabase
-      .from('properties')
-      .select(`
+      .from("properties")
+      .select(
+        `
         id,
         owner_id,
         name,
@@ -92,15 +105,16 @@ export async function propertiesRoute(app: FastifyInstance) {
         status,
         created_at,
         updated_at
-      `)
-      .eq('id', id)
-      .eq('status', 'ACTIVE')
+      `,
+      )
+      .eq("id", id)
+      .eq("status", "ACTIVE")
       .maybeSingle();
 
     if (error) {
       return reply.status(500).send({
         success: false,
-        message: 'Failed to fetch property',
+        message: "Failed to fetch property",
         error: error.message,
       });
     }
@@ -108,7 +122,7 @@ export async function propertiesRoute(app: FastifyInstance) {
     if (!data) {
       return reply.status(404).send({
         success: false,
-        message: 'Property not found',
+        message: "Property not found",
       });
     }
 
@@ -127,12 +141,12 @@ export async function propertiesRoute(app: FastifyInstance) {
    * - owner_id phải bằng user hiện tại
    */
   app.post(
-    '/api/properties',
+    "/api/properties",
     {
       preHandler: authenticate,
     },
     async (request, reply) => {
-      const body = request.body as {
+      const body = (request.body ?? {}) as {
         name?: string;
         slug?: string;
         description?: string;
@@ -151,26 +165,22 @@ export async function propertiesRoute(app: FastifyInstance) {
         cancellation_fee_percent?: number;
       };
 
-      if (!body.name?.trim()) {
+      const name = (body.name ?? "").trim();
+      if (!name) {
         return reply.status(400).send({
           success: false,
-          message: 'Property name is required',
+          message: "Property name is required",
         });
       }
 
-      if (!body.slug?.trim()) {
-        return reply.status(400).send({
-          success: false,
-          message: 'Property slug is required',
-        });
-      }
+      const slug = (body.slug ?? "").trim() || generateSlug(name);
 
       const authorization = request.headers.authorization;
 
-      if (!authorization?.startsWith('Bearer ')) {
+      if (!authorization?.startsWith("Bearer ")) {
         return reply.status(401).send({
           success: false,
-          message: 'Missing access token',
+          message: "Missing access token",
         });
       }
 
@@ -179,30 +189,25 @@ export async function propertiesRoute(app: FastifyInstance) {
       const userSupabase = createUserSupabaseClient(accessToken);
 
       const { data, error } = await userSupabase
-        .from('properties')
+        .from("properties")
         .insert({
           owner_id: request.user.id,
-          name: body.name.trim(),
-          slug: body.slug.trim(),
+          name,
+          slug,
           description: body.description ?? null,
           address: body.address ?? null,
           city: body.city ?? null,
-          country: body.country ?? 'Vietnam',
+          country: body.country ?? "Vietnam",
           latitude: body.latitude ?? null,
           longitude: body.longitude ?? null,
-          timezone: body.timezone ?? 'Asia/Ho_Chi_Minh',
-          booking_interval_minutes:
-            body.booking_interval_minutes ?? 60,
-          minimum_booking_minutes:
-            body.minimum_booking_minutes ?? 60,
-          maximum_booking_minutes:
-            body.maximum_booking_minutes ?? 1440,
+          timezone: body.timezone ?? "Asia/Ho_Chi_Minh",
+          booking_interval_minutes: body.booking_interval_minutes ?? 60,
+          minimum_booking_minutes: body.minimum_booking_minutes ?? 60,
+          maximum_booking_minutes: UNLIMITED_BOOKING_MINUTES,
           check_in_time: body.check_in_time ?? null,
           check_out_time: body.check_out_time ?? null,
-          cancellation_deadline_hours:
-            body.cancellation_deadline_hours ?? 24,
-          cancellation_fee_percent:
-            body.cancellation_fee_percent ?? 0,
+          cancellation_deadline_hours: body.cancellation_deadline_hours ?? 24,
+          cancellation_fee_percent: body.cancellation_fee_percent ?? 0,
         })
         .select()
         .single();
@@ -210,7 +215,7 @@ export async function propertiesRoute(app: FastifyInstance) {
       if (error) {
         return reply.status(400).send({
           success: false,
-          message: 'Failed to create property',
+          message: "Failed to create property",
           error: error.message,
         });
       }
@@ -221,18 +226,17 @@ export async function propertiesRoute(app: FastifyInstance) {
       });
     },
   );
-    /**
+  /**
    * PATCH /api/properties/:id
    *
    * HOST:
    * - Chỉ sửa property của chính mình
    */
-  app.patch(
-    '/api/properties/:id',
-    {
-      preHandler: authenticate,
-    },
-    async (request, reply) => {
+  app.route({
+    method: ["PATCH", "PUT"],
+    url: "/api/properties/:id",
+    preHandler: authenticate,
+    handler: async (request, reply) => {
       const { id } = request.params as {
         id: string;
       };
@@ -254,22 +258,21 @@ export async function propertiesRoute(app: FastifyInstance) {
         check_out_time?: string;
         cancellation_deadline_hours?: number;
         cancellation_fee_percent?: number;
-        status?: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+        status?: "ACTIVE" | "INACTIVE" | "SUSPENDED";
       };
 
       const authorization = request.headers.authorization;
 
-      if (!authorization?.startsWith('Bearer ')) {
+      if (!authorization?.startsWith("Bearer ")) {
         return reply.status(401).send({
           success: false,
-          message: 'Missing access token',
+          message: "Missing access token",
         });
       }
 
       const accessToken = authorization.slice(7).trim();
 
-      const userSupabase =
-        createUserSupabaseClient(accessToken);
+      const userSupabase = createUserSupabaseClient(accessToken);
 
       const updateData: Record<string, unknown> = {};
 
@@ -310,18 +313,11 @@ export async function propertiesRoute(app: FastifyInstance) {
       }
 
       if (body.booking_interval_minutes !== undefined) {
-        updateData.booking_interval_minutes =
-          body.booking_interval_minutes;
+        updateData.booking_interval_minutes = body.booking_interval_minutes;
       }
 
       if (body.minimum_booking_minutes !== undefined) {
-        updateData.minimum_booking_minutes =
-          body.minimum_booking_minutes;
-      }
-
-      if (body.maximum_booking_minutes !== undefined) {
-        updateData.maximum_booking_minutes =
-          body.maximum_booking_minutes;
+        updateData.minimum_booking_minutes = body.minimum_booking_minutes;
       }
 
       if (body.check_in_time !== undefined) {
@@ -338,8 +334,7 @@ export async function propertiesRoute(app: FastifyInstance) {
       }
 
       if (body.cancellation_fee_percent !== undefined) {
-        updateData.cancellation_fee_percent =
-          body.cancellation_fee_percent;
+        updateData.cancellation_fee_percent = body.cancellation_fee_percent;
       }
 
       if (body.status !== undefined) {
@@ -349,31 +344,37 @@ export async function propertiesRoute(app: FastifyInstance) {
       if (Object.keys(updateData).length === 0) {
         return reply.status(400).send({
           success: false,
-          message: 'No fields to update',
+          code: "NO_FIELDS_TO_UPDATE",
+          message: "No fields to update",
         });
       }
+
+      updateData.maximum_booking_minutes = UNLIMITED_BOOKING_MINUTES;
 
       updateData.updated_at = new Date().toISOString();
 
       const { data, error } = await userSupabase
-        .from('properties')
+        .from("properties")
         .update(updateData)
-        .eq('id', id)
+        .eq("id", id)
         .select()
         .maybeSingle();
 
       if (error) {
+        const updateError = describePropertyUpdateError(error);
         return reply.status(400).send({
           success: false,
-          message: 'Failed to update property',
-          error: error.message,
+          ...updateError,
+          details: error.message,
         });
       }
 
       if (!data) {
         return reply.status(404).send({
           success: false,
-          message: 'Property not found or not owned by user',
+          code: "PROPERTY_NOT_FOUND_OR_FORBIDDEN",
+          message:
+            "The property was not found, or you do not have permission to edit it.",
         });
       }
 
@@ -382,8 +383,8 @@ export async function propertiesRoute(app: FastifyInstance) {
         data,
       };
     },
-  );
-    /**
+  });
+  /**
    * DELETE /api/properties/:id
    *
    * Soft delete:
@@ -391,7 +392,7 @@ export async function propertiesRoute(app: FastifyInstance) {
    * - Chuyển status -> INACTIVE
    */
   app.delete(
-    '/api/properties/:id',
+    "/api/properties/:id",
     {
       preHandler: authenticate,
     },
@@ -402,32 +403,31 @@ export async function propertiesRoute(app: FastifyInstance) {
 
       const authorization = request.headers.authorization;
 
-      if (!authorization?.startsWith('Bearer ')) {
+      if (!authorization?.startsWith("Bearer ")) {
         return reply.status(401).send({
           success: false,
-          message: 'Missing access token',
+          message: "Missing access token",
         });
       }
 
       const accessToken = authorization.slice(7).trim();
 
-      const userSupabase =
-        createUserSupabaseClient(accessToken);
+      const userSupabase = createUserSupabaseClient(accessToken);
 
       const { data, error } = await userSupabase
-        .from('properties')
+        .from("properties")
         .update({
-          status: 'INACTIVE',
+          status: "INACTIVE",
           updated_at: new Date().toISOString(),
         })
-        .eq('id', id)
+        .eq("id", id)
         .select()
         .maybeSingle();
 
       if (error) {
         return reply.status(400).send({
           success: false,
-          message: 'Failed to deactivate property',
+          message: "Failed to deactivate property",
           error: error.message,
         });
       }
@@ -435,13 +435,13 @@ export async function propertiesRoute(app: FastifyInstance) {
       if (!data) {
         return reply.status(404).send({
           success: false,
-          message: 'Property not found or not owned by user',
+          message: "Property not found or not owned by user",
         });
       }
 
       return {
         success: true,
-        message: 'Property deactivated successfully',
+        message: "Property deactivated successfully",
         data,
       };
     },

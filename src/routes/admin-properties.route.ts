@@ -1,27 +1,58 @@
-import type { FastifyInstance } from 'fastify';
-import { authenticate } from '../middleware/auth.js';
-import {
-  supabaseAdmin,
-  createUserSupabaseClient,
-} from '../lib/supabase.js';
+import type { FastifyInstance } from "fastify";
+import { authenticate } from "../middleware/auth.js";
+import { supabaseAdmin, createUserSupabaseClient } from "../lib/supabase.js";
+import { describePropertyUpdateError } from "../lib/property-update-error.js";
+import { pricingPlanService } from "../services/pricing-plan.service.js";
 
-export async function adminPropertiesRoute(
-  app: FastifyInstance,
-) {
+const UNLIMITED_BOOKING_MINUTES = 2_147_483_647;
+
+const normalizeTimezone = (value?: string | null) => {
+  const raw = (value || "Asia/Ho_Chi_Minh").trim();
+  const key = raw.toLowerCase();
+  const aliases: Record<string, string> = {
+    "gmt+0700": "Asia/Ho_Chi_Minh",
+    "gmt+7": "Asia/Ho_Chi_Minh",
+    "utc+7": "Asia/Ho_Chi_Minh",
+    "gmt+0800": "Asia/Singapore",
+    "gmt+8": "Asia/Singapore",
+    "utc+8": "Asia/Singapore",
+    gmt: "Etc/GMT",
+    utc: "Etc/UTC",
+  };
+
+  if (aliases[key]) return aliases[key];
+
+  const supported = (Intl as any).supportedValuesOf?.("timeZone");
+  if (Array.isArray(supported)) {
+    if (supported.includes(raw)) return raw;
+    const alt = raw.replace(/^etc\//i, "Etc/");
+    if (supported.includes(alt)) return alt;
+  }
+
+  return "Asia/Ho_Chi_Minh";
+};
+
+function generateSlug(name: string): string {
+  const base = name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${base || "property"}-${Date.now().toString(36)}`;
+}
+
+export async function adminPropertiesRoute(app: FastifyInstance) {
   // =========================================================
   // ADMIN CHECK
   // =========================================================
-  async function requireAdmin(
-    accessToken: string,
-  ) {
-    const userClient =
-      createUserSupabaseClient(accessToken);
+  async function requireAdmin(accessToken: string) {
+    const userClient = createUserSupabaseClient(accessToken);
 
-    const { data, error } =
-      await userClient.rpc('is_admin');
+    const { data, error } = await userClient.rpc("is_admin");
 
     if (error || data !== true) {
-      throw new Error('ADMIN_REQUIRED');
+      throw new Error("ADMIN_REQUIRED");
     }
   }
 
@@ -30,18 +61,16 @@ export async function adminPropertiesRoute(
   // GET /api/admin/properties
   // =========================================================
   app.get(
-    '/api/admin/properties',
+    "/api/admin/properties",
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
@@ -56,21 +85,12 @@ export async function adminPropertiesRoute(
           offset?: string;
         };
 
-        const limit = Math.min(
-          Math.max(
-            Number(query.limit ?? 20),
-            1,
-          ),
-          100,
-        );
+        const limit = Math.min(Math.max(Number(query.limit ?? 20), 1), 100);
 
-        const offset = Math.max(
-          Number(query.offset ?? 0),
-          0,
-        );
+        const offset = Math.max(Number(query.offset ?? 0), 0);
 
         let dbQuery = supabaseAdmin
-          .from('properties')
+          .from("properties")
           .select(
             `
             id,
@@ -101,35 +121,23 @@ export async function adminPropertiesRoute(
               avatar_url
             )
           `,
-            { count: 'exact' },
+            { count: "exact" },
           )
-          .order('created_at', {
+          .order("created_at", {
             ascending: false,
           })
-          .range(
-            offset,
-            offset + limit - 1,
-          );
+          .range(offset, offset + limit - 1);
 
         if (query.status) {
-          dbQuery = dbQuery.eq(
-            'status',
-            query.status,
-          );
+          dbQuery = dbQuery.eq("status", query.status);
         }
 
         if (query.owner_id) {
-          dbQuery = dbQuery.eq(
-            'owner_id',
-            query.owner_id,
-          );
+          dbQuery = dbQuery.eq("owner_id", query.owner_id);
         }
 
         if (query.city?.trim()) {
-          dbQuery = dbQuery.ilike(
-            'city',
-            `%${query.city.trim()}%`,
-          );
+          dbQuery = dbQuery.ilike("city", `%${query.city.trim()}%`);
         }
 
         if (query.search?.trim()) {
@@ -138,24 +146,29 @@ export async function adminPropertiesRoute(
           );
         }
 
-        const {
-          data,
-          error,
-          count,
-        } = await dbQuery;
+        const { data, error, count } = await dbQuery;
 
         if (error) {
           return reply.status(400).send({
             success: false,
-            message:
-              'Failed to get properties',
+            message: "Failed to get properties",
             error: error.message,
           });
         }
 
+        const enriched = (data ?? []).map((p) => {
+          const plan = pricingPlanService.getPropertyPlan(p.id);
+          const planId = pricingPlanService.getPropertyPlanId(p.id);
+          return {
+            ...p,
+            pricing_plan_id: planId,
+            pricing_plan: plan,
+          };
+        });
+
         return {
           success: true,
-          data: data ?? [],
+          data: enriched,
           pagination: {
             total: count ?? 0,
             limit,
@@ -163,22 +176,16 @@ export async function adminPropertiesRoute(
           },
         };
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },
@@ -189,33 +196,27 @@ export async function adminPropertiesRoute(
   // GET /api/admin/properties/:id
   // =========================================================
   app.get(
-    '/api/admin/properties/:id',
+    "/api/admin/properties/:id",
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
         await requireAdmin(token);
 
-        const { id } =
-          request.params as {
-            id: string;
-          };
+        const { id } = request.params as {
+          id: string;
+        };
 
-        const {
-          data,
-          error,
-        } = await supabaseAdmin
-          .from('properties')
+        const { data, error } = await supabaseAdmin
+          .from("properties")
           .select(
             `
             *,
@@ -236,38 +237,38 @@ export async function adminPropertiesRoute(
             )
           `,
           )
-          .eq('id', id)
+          .eq("id", id)
           .single();
 
         if (error) {
           return reply.status(404).send({
             success: false,
-            message:
-              'Property not found',
+            message: "Property not found",
           });
         }
 
+        const plan = pricingPlanService.getPropertyPlan(data.id);
+        const planId = pricingPlanService.getPropertyPlanId(data.id);
+
         return {
           success: true,
-          data,
+          data: {
+            ...data,
+            pricing_plan_id: planId,
+            pricing_plan: plan,
+          },
         };
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },
@@ -278,97 +279,64 @@ export async function adminPropertiesRoute(
   // POST /api/admin/properties
   // =========================================================
   app.post(
-    '/api/admin/properties',
+    "/api/admin/properties",
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
         await requireAdmin(token);
 
-        const body =
-          request.body as any;
+        const body = (request.body ?? {}) as any;
 
-        if (!body.owner_id) {
+        const name = (body.name ?? "").trim();
+        if (!name) {
           return reply.status(400).send({
             success: false,
-            message:
-              'owner_id is required',
+            message: "name is required",
           });
         }
 
-        if (!body.name?.trim()) {
+        const ownerId = body.owner_id || (request as any).user?.id;
+        if (!ownerId) {
           return reply.status(400).send({
             success: false,
-            message:
-              'name is required',
+            message: "owner_id is required",
           });
         }
 
-        if (!body.slug?.trim()) {
-          return reply.status(400).send({
-            success: false,
-            message:
-              'slug is required',
-          });
-        }
+        const slug = (body.slug ?? "").trim() || generateSlug(name);
 
         const payload = {
-          owner_id: body.owner_id,
-          name: body.name.trim(),
-          slug: body.slug.trim(),
-          description:
-            body.description ?? null,
-          address:
-            body.address ?? null,
-          city:
-            body.city ?? null,
-          country:
-            body.country ?? 'Vietnam',
-          latitude:
-            body.latitude ?? null,
-          longitude:
-            body.longitude ?? null,
-          timezone:
-            body.timezone ??
-            'Asia/Ho_Chi_Minh',
-          booking_interval_minutes:
-            body.booking_interval_minutes ??
-            60,
-          minimum_booking_minutes:
-            body.minimum_booking_minutes ??
-            60,
-          maximum_booking_minutes:
-            body.maximum_booking_minutes ??
-            1440,
-          check_in_time:
-            body.check_in_time ?? null,
-          check_out_time:
-            body.check_out_time ?? null,
-          cancellation_deadline_hours:
-            body.cancellation_deadline_hours ??
-            24,
-          cancellation_fee_percent:
-            body.cancellation_fee_percent ??
-            0,
-          status:
-            body.status ?? 'ACTIVE',
+          owner_id: ownerId,
+          name,
+          slug,
+          description: body.description ? String(body.description).trim() : null,
+          address: body.address ? String(body.address).trim() : null,
+          city: body.city ? String(body.city).trim() : null,
+          country: body.country ? String(body.country).trim() : "Vietnam",
+          latitude: body.latitude ?? null,
+          longitude: body.longitude ?? null,
+          timezone: normalizeTimezone(body.timezone),
+          booking_interval_minutes: body.booking_interval_minutes ?? 60,
+          minimum_booking_minutes: body.minimum_booking_minutes ?? 60,
+          maximum_booking_minutes: UNLIMITED_BOOKING_MINUTES,
+          check_in_time: body.check_in_time ?? null,
+          check_out_time: body.check_out_time ?? null,
+          cancellation_deadline_hours: body.cancellation_deadline_hours ?? 24,
+          cancellation_fee_percent: body.cancellation_fee_percent ?? 0,
+          status: body.status ?? "ACTIVE",
         };
 
-        const {
-          data,
-          error,
-        } = await supabaseAdmin
-          .from('properties')
+        const { data, error } = await supabaseAdmin
+          .from("properties")
           .insert(payload)
           .select()
           .single();
@@ -376,33 +344,38 @@ export async function adminPropertiesRoute(
         if (error) {
           return reply.status(400).send({
             success: false,
-            message:
-              'Failed to create property',
+            message: "Failed to create property",
             error: error.message,
           });
         }
 
+        if (body.pricing_plan_id !== undefined) {
+          pricingPlanService.setPropertyPlan(data.id, body.pricing_plan_id || null);
+          await pricingPlanService.syncPropertyPlanToDatabase(data.id, body.pricing_plan_id || null);
+        }
+
+        const plan = pricingPlanService.getPropertyPlan(data.id);
+        const planId = pricingPlanService.getPropertyPlanId(data.id);
+
         return reply.status(201).send({
           success: true,
-          data,
+          data: {
+            ...data,
+            pricing_plan_id: planId,
+            pricing_plan: plan,
+          },
         });
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },
@@ -412,201 +385,207 @@ export async function adminPropertiesRoute(
   // UPDATE PROPERTY
   // PATCH /api/admin/properties/:id
   // =========================================================
-  app.patch(
-    '/api/admin/properties/:id',
-    { preHandler: authenticate },
-    async (request, reply) => {
+  app.route({
+    method: ["PATCH", "PUT"],
+    url: "/api/admin/properties/:id",
+    preHandler: authenticate,
+    handler: async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
         await requireAdmin(token);
 
-        const { id } =
-          request.params as {
-            id: string;
-          };
+        const { id } = request.params as {
+          id: string;
+        };
 
-        const body =
-          request.body as any;
+        const body = request.body as any;
 
         const allowedFields = [
-          'owner_id',
-          'name',
-          'slug',
-          'description',
-          'address',
-          'city',
-          'country',
-          'latitude',
-          'longitude',
-          'timezone',
-          'booking_interval_minutes',
-          'minimum_booking_minutes',
-          'maximum_booking_minutes',
-          'check_in_time',
-          'check_out_time',
-          'cancellation_deadline_hours',
-          'cancellation_fee_percent',
-          'status',
+          "owner_id",
+          "name",
+          "slug",
+          "description",
+          "address",
+          "city",
+          "country",
+          "latitude",
+          "longitude",
+          "timezone",
+          "booking_interval_minutes",
+          "minimum_booking_minutes",
+          "maximum_booking_minutes",
+          "check_in_time",
+          "check_out_time",
+          "cancellation_deadline_hours",
+          "cancellation_fee_percent",
+          "status",
         ];
 
-        const payload: Record<
-          string,
-          any
-        > = {};
+        const payload: Record<string, any> = {};
 
         for (const field of allowedFields) {
-          if (
-            body[field] !== undefined
-          ) {
-            payload[field] =
-              typeof body[field] ===
-              'string'
+          if (body[field] !== undefined) {
+            const value =
+              typeof body[field] === "string"
                 ? body[field].trim()
                 : body[field];
+            payload[field] =
+              field === "timezone" ? normalizeTimezone(value) : value;
           }
         }
 
-        if (
-          Object.keys(payload)
-            .length === 0
-        ) {
+        if (Object.keys(payload).length === 0 && body.pricing_plan_id === undefined) {
           return reply.status(400).send({
             success: false,
-            message:
-              'No fields to update',
+            code: "NO_FIELDS_TO_UPDATE",
+            message: "No fields to update",
           });
         }
 
-        payload.updated_at =
-          new Date().toISOString();
+        let propertyData: any = null;
 
-        const {
-          data,
-          error,
-        } = await supabaseAdmin
-          .from('properties')
-          .update(payload)
-          .eq('id', id)
-          .select()
-          .single();
+        if (Object.keys(payload).length > 0) {
+          payload.maximum_booking_minutes = UNLIMITED_BOOKING_MINUTES;
+          payload.updated_at = new Date().toISOString();
 
-        if (error) {
-          return reply.status(400).send({
-            success: false,
-            message:
-              'Failed to update property',
-            error: error.message,
-          });
+          const { data, error } = await supabaseAdmin
+            .from("properties")
+            .update(payload)
+            .eq("id", id)
+            .select()
+            .maybeSingle();
+
+          if (error) {
+            const updateError = describePropertyUpdateError(error);
+            return reply.status(400).send({
+              success: false,
+              ...updateError,
+              details: error.message,
+            });
+          }
+
+          if (!data) {
+            return reply.status(404).send({
+              success: false,
+              code: "PROPERTY_NOT_FOUND",
+              message: "The property you are trying to edit was not found.",
+            });
+          }
+          propertyData = data;
+        } else {
+          const { data, error } = await supabaseAdmin
+            .from("properties")
+            .select()
+            .eq("id", id)
+            .maybeSingle();
+
+          if (error || !data) {
+            return reply.status(404).send({
+              success: false,
+              code: "PROPERTY_NOT_FOUND",
+              message: "The property you are trying to edit was not found.",
+            });
+          }
+          propertyData = data;
         }
+
+        if (body.pricing_plan_id !== undefined) {
+          pricingPlanService.setPropertyPlan(id, body.pricing_plan_id || null);
+          await pricingPlanService.syncPropertyPlanToDatabase(id, body.pricing_plan_id || null);
+        }
+
+        const plan = pricingPlanService.getPropertyPlan(id);
+        const planId = pricingPlanService.getPropertyPlanId(id);
 
         return {
           success: true,
-          data,
+          data: {
+            ...propertyData,
+            pricing_plan_id: planId,
+            pricing_plan: plan,
+          },
         };
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },
-  );
+  });
 
   // =========================================================
   // DEACTIVATE PROPERTY
   // DELETE /api/admin/properties/:id
   // =========================================================
   app.delete(
-    '/api/admin/properties/:id',
+    "/api/admin/properties/:id",
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token =
-          request.headers.authorization
-            ?.replace('Bearer ', '');
+        const token = request.headers.authorization?.replace("Bearer ", "");
 
         if (!token) {
           return reply.status(401).send({
             success: false,
-            message: 'Missing access token',
+            message: "Missing access token",
           });
         }
 
         await requireAdmin(token);
 
-        const { id } =
-          request.params as {
-            id: string;
-          };
+        const { id } = request.params as {
+          id: string;
+        };
 
-        const {
-          data,
-          error,
-        } = await supabaseAdmin
-          .from('properties')
+        const { data, error } = await supabaseAdmin
+          .from("properties")
           .update({
-            status: 'INACTIVE',
-            updated_at:
-              new Date().toISOString(),
+            status: "INACTIVE",
+            updated_at: new Date().toISOString(),
           })
-          .eq('id', id)
+          .eq("id", id)
           .select()
           .single();
 
         if (error) {
           return reply.status(404).send({
             success: false,
-            message:
-              'Property not found',
+            message: "Property not found",
           });
         }
 
         return {
           success: true,
-          message:
-            'Property deactivated successfully',
+          message: "Property deactivated successfully",
           data,
         };
       } catch (error: any) {
-        if (
-          error?.message ===
-          'ADMIN_REQUIRED'
-        ) {
+        if (error?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({
             success: false,
-            message:
-              'Admin access required',
+            message: "Admin access required",
           });
         }
 
         return reply.status(500).send({
           success: false,
-          message:
-            error?.message ??
-            'Internal server error',
+          message: error?.message ?? "Internal server error",
         });
       }
     },

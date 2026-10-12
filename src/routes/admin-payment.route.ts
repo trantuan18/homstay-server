@@ -154,6 +154,32 @@ export async function adminPaymentRoute(app: FastifyInstance) {
         });
       }
 
+      const accessToken = getAccessToken(request);
+
+      const userSupabase =
+        createUserSupabaseClient(accessToken);
+
+      // -------------------------------------------------------
+      // Auto-resolve amount for PAID if not provided
+      // -------------------------------------------------------
+      if (
+        body.payment_status === 'PAID' &&
+        (body.amount === undefined ||
+          body.amount === null ||
+          Number.isNaN(Number(body.amount)) ||
+          Number(body.amount) <= 0)
+      ) {
+        const { data: bookingData } = await userSupabase
+          .from('bookings')
+          .select('total')
+          .eq('id', bookingId)
+          .single();
+
+        if (bookingData?.total) {
+          body.amount = Number(bookingData.total);
+        }
+      }
+
       // -------------------------------------------------------
       // Validate amount
       // -------------------------------------------------------
@@ -174,11 +200,6 @@ export async function adminPaymentRoute(app: FastifyInstance) {
           });
         }
       }
-
-      const accessToken = getAccessToken(request);
-
-      const userSupabase =
-        createUserSupabaseClient(accessToken);
 
       // -------------------------------------------------------
       // Call Admin Payment RPC

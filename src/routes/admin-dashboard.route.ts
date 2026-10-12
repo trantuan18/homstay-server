@@ -1,20 +1,14 @@
-import { FastifyInstance } from 'fastify';
-import { authenticate } from '../middleware/auth.js';
-import {
-  supabaseAdmin,
-  createUserSupabaseClient,
-} from '../lib/supabase.js';
+import { FastifyInstance } from "fastify";
+import { authenticate } from "../middleware/auth.js";
+import { supabaseAdmin, createUserSupabaseClient } from "../lib/supabase.js";
 
-async function requireAdmin(
-  request: any,
-  reply: any,
-) {
+async function requireAdmin(request: any, reply: any) {
   const authHeader = request.headers.authorization;
 
-  if (!authHeader?.startsWith('Bearer ')) {
+  if (!authHeader?.startsWith("Bearer ")) {
     reply.code(401).send({
       success: false,
-      message: 'Missing access token',
+      message: "Missing access token",
     });
     return null;
   }
@@ -23,15 +17,12 @@ async function requireAdmin(
 
   const userClient = createUserSupabaseClient(token);
 
-  const {
-    data,
-    error,
-  } = await userClient.rpc('is_admin');
+  const { data, error } = await userClient.rpc("is_admin");
 
   if (error || data !== true) {
     reply.code(403).send({
       success: false,
-      message: 'ADMIN_REQUIRED',
+      message: "ADMIN_REQUIRED",
     });
     return null;
   }
@@ -39,20 +30,15 @@ async function requireAdmin(
   return true;
 }
 
-export async function adminDashboardRoute(
-  app: FastifyInstance,
-) {
+export async function adminDashboardRoute(app: FastifyInstance) {
   /**
    * GET /api/admin/dashboard
    */
   app.get(
-    '/api/admin/dashboard',
+    "/api/admin/dashboard",
     { preHandler: authenticate },
     async (request, reply) => {
-      const isAdmin = await requireAdmin(
-        request,
-        reply,
-      );
+      const isAdmin = await requireAdmin(request, reply);
 
       if (!isAdmin) return;
 
@@ -68,19 +54,45 @@ export async function adminDashboardRoute(
        */
       const now = new Date();
 
-      const defaultFrom = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        1,
-      );
+      const defaultFrom = new Date(now.getFullYear(), now.getMonth(), 1);
 
-      const from =
-        query.from ??
-        defaultFrom.toISOString();
+      const fromValue = query.from ?? defaultFrom.toISOString();
 
-      const to =
-        query.to ??
-        now.toISOString();
+      const toValue = query.to ?? now.toISOString();
+
+      const parseDateBound = (
+        value: string,
+        endOfDay: boolean,
+      ): Date | null => {
+        const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+        if (dateOnlyMatch) {
+          const [, year, month, day] = dateOnlyMatch;
+          const date = new Date(
+            `${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`,
+          );
+          if (
+            date.getUTCFullYear() !== Number(year) ||
+            date.getUTCMonth() + 1 !== Number(month) ||
+            date.getUTCDate() !== Number(day)
+          ) {
+            return null;
+          }
+          return date;
+        }
+
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      };
+
+      const from = parseDateBound(fromValue, false);
+      const to = parseDateBound(toValue, true);
+
+      if (!from || !to || from > to) {
+        return reply.code(400).send({
+          success: false,
+          message: "INVALID_DATE_RANGE",
+        });
+      }
 
       /*
        * =========================
@@ -89,7 +101,7 @@ export async function adminDashboardRoute(
        */
 
       let bookingsQuery = supabaseAdmin
-        .from('bookings')
+        .from("bookings")
         .select(
           `
           id,
@@ -103,20 +115,14 @@ export async function adminDashboardRoute(
           room_id
         `,
         )
-        .gte('created_at', from)
-        .lte('created_at', to);
+        .gte("created_at", from.toISOString())
+        .lte("created_at", to.toISOString());
 
       if (query.property_id) {
-        bookingsQuery = bookingsQuery.eq(
-          'property_id',
-          query.property_id,
-        );
+        bookingsQuery = bookingsQuery.eq("property_id", query.property_id);
       }
 
-      const {
-        data: bookings,
-        error: bookingsError,
-      } = await bookingsQuery;
+      const { data: bookings, error: bookingsError } = await bookingsQuery;
 
       if (bookingsError) {
         return reply.code(500).send({
@@ -146,31 +152,31 @@ export async function adminDashboardRoute(
 
       for (const booking of bookingRows) {
         switch (booking.status) {
-          case 'PENDING':
+          case "PENDING":
             bookingStats.pending++;
             break;
 
-          case 'CONFIRMED':
+          case "CONFIRMED":
             bookingStats.confirmed++;
             break;
 
-          case 'CHECKED_IN':
+          case "CHECKED_IN":
             bookingStats.checked_in++;
             break;
 
-          case 'CHECKED_OUT':
+          case "CHECKED_OUT":
             bookingStats.checked_out++;
             break;
 
-          case 'CANCELLED':
+          case "CANCELLED":
             bookingStats.cancelled++;
             break;
 
-          case 'EXPIRED':
+          case "EXPIRED":
             bookingStats.expired++;
             break;
 
-          case 'NO_SHOW':
+          case "NO_SHOW":
             bookingStats.no_show++;
             break;
         }
@@ -197,20 +203,18 @@ export async function adminDashboardRoute(
         const total = Number(booking.total ?? 0);
 
         if (
-          booking.status === 'CONFIRMED' ||
-          booking.status === 'CHECKED_IN' ||
-          booking.status === 'CHECKED_OUT'
+          booking.status === "CONFIRMED" ||
+          booking.status === "CHECKED_IN" ||
+          booking.status === "CHECKED_OUT"
         ) {
           revenue += total;
         }
 
-        if (booking.payment_status === 'PAID') {
+        if (booking.payment_status === "PAID") {
           paidRevenue += total;
         }
 
-        if (
-          booking.payment_status === 'PARTIAL'
-        ) {
+        if (booking.payment_status === "PARTIAL") {
           partialRevenue += total;
         }
       }
@@ -222,20 +226,15 @@ export async function adminDashboardRoute(
        */
 
       let propertiesQuery = supabaseAdmin
-        .from('properties')
-        .select('id, status');
+        .from("properties")
+        .select("id, status");
 
       if (query.property_id) {
-        propertiesQuery = propertiesQuery.eq(
-          'id',
-          query.property_id,
-        );
+        propertiesQuery = propertiesQuery.eq("id", query.property_id);
       }
 
-      const {
-        data: properties,
-        error: propertiesError,
-      } = await propertiesQuery;
+      const { data: properties, error: propertiesError } =
+        await propertiesQuery;
 
       if (propertiesError) {
         return reply.code(500).send({
@@ -248,15 +247,9 @@ export async function adminDashboardRoute(
 
       const propertyStats = {
         total: propertyRows.length,
-        active: propertyRows.filter(
-          (p) => p.status === 'ACTIVE',
-        ).length,
-        inactive: propertyRows.filter(
-          (p) => p.status === 'INACTIVE',
-        ).length,
-        suspended: propertyRows.filter(
-          (p) => p.status === 'SUSPENDED',
-        ).length,
+        active: propertyRows.filter((p) => p.status === "ACTIVE").length,
+        inactive: propertyRows.filter((p) => p.status === "INACTIVE").length,
+        suspended: propertyRows.filter((p) => p.status === "SUSPENDED").length,
       };
 
       /*
@@ -266,20 +259,14 @@ export async function adminDashboardRoute(
        */
 
       let roomsQuery = supabaseAdmin
-        .from('rooms')
-        .select('id, status, property_id');
+        .from("rooms")
+        .select("id, status, property_id");
 
       if (query.property_id) {
-        roomsQuery = roomsQuery.eq(
-          'property_id',
-          query.property_id,
-        );
+        roomsQuery = roomsQuery.eq("property_id", query.property_id);
       }
 
-      const {
-        data: rooms,
-        error: roomsError,
-      } = await roomsQuery;
+      const { data: rooms, error: roomsError } = await roomsQuery;
 
       if (roomsError) {
         return reply.code(500).send({
@@ -292,15 +279,9 @@ export async function adminDashboardRoute(
 
       const roomStats = {
         total: roomRows.length,
-        available: roomRows.filter(
-          (r) => r.status === 'AVAILABLE',
-        ).length,
-        maintenance: roomRows.filter(
-          (r) => r.status === 'MAINTENANCE',
-        ).length,
-        inactive: roomRows.filter(
-          (r) => r.status === 'INACTIVE',
-        ).length,
+        available: roomRows.filter((r) => r.status === "AVAILABLE").length,
+        maintenance: roomRows.filter((r) => r.status === "MAINTENANCE").length,
+        inactive: roomRows.filter((r) => r.status === "INACTIVE").length,
       };
 
       /*
@@ -310,17 +291,12 @@ export async function adminDashboardRoute(
        */
 
       let paymentsQuery = supabaseAdmin
-        .from('payments')
-        .select(
-          'id, amount, status, currency, booking_id',
-        )
-        .gte('created_at', from)
-        .lte('created_at', to);
+        .from("payments")
+        .select("id, amount, status, currency, booking_id")
+        .gte("created_at", from.toISOString())
+        .lte("created_at", to.toISOString());
 
-      const {
-        data: payments,
-        error: paymentsError,
-      } = await paymentsQuery;
+      const { data: payments, error: paymentsError } = await paymentsQuery;
 
       if (paymentsError) {
         return reply.code(500).send({
@@ -343,29 +319,27 @@ export async function adminDashboardRoute(
       };
 
       for (const payment of paymentRows) {
-        const amount = Number(
-          payment.amount ?? 0,
-        );
+        const amount = Number(payment.amount ?? 0);
 
         switch (payment.status) {
-          case 'PENDING':
+          case "PENDING":
             paymentStats.pending++;
             break;
 
-          case 'PROCESSING':
+          case "PROCESSING":
             paymentStats.processing++;
             break;
 
-          case 'SUCCESS':
+          case "SUCCESS":
             paymentStats.success++;
             paymentStats.success_amount += amount;
             break;
 
-          case 'FAILED':
+          case "FAILED":
             paymentStats.failed++;
             break;
 
-          case 'REFUNDED':
+          case "REFUNDED":
             paymentStats.refunded++;
             paymentStats.refunded_amount += amount;
             break;
@@ -382,13 +356,12 @@ export async function adminDashboardRoute(
         success: true,
 
         period: {
-          from,
-          to,
+          from: from.toISOString(),
+          to: to.toISOString(),
         },
 
         filters: {
-          property_id:
-            query.property_id ?? null,
+          property_id: query.property_id ?? null,
         },
 
         bookings: bookingStats,
@@ -397,7 +370,7 @@ export async function adminDashboardRoute(
           booking_revenue: revenue,
           paid_revenue: paidRevenue,
           partial_revenue: partialRevenue,
-          currency: 'VND',
+          currency: "VND",
         },
 
         properties: propertyStats,

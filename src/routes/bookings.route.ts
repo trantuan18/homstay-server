@@ -2,8 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import {
   createUserSupabaseClient,
   supabase,
+  supabaseAdmin,
 } from '../lib/supabase.js';
 import { authenticate } from '../middleware/auth.js';
+import { pricingPlanService } from '../services/pricing-plan.service.js';
 import {
   notifyBookingCreated,
 } from '../services/booking-notification.service.js';
@@ -162,7 +164,7 @@ export async function bookingsRoute(app: FastifyInstance) {
       //   data: booking,
       // });
 
-      const booking = Array.isArray(data)
+      let booking = Array.isArray(data)
         ? data[0]
         : data;
 
@@ -171,6 +173,44 @@ export async function bookingsRoute(app: FastifyInstance) {
           success: false,
           message: 'Booking creation returned no data',
         });
+      }
+
+      if (booking?.id) {
+        const { data: roomData } = await supabaseAdmin
+          .from('rooms')
+          .select('property_id')
+          .eq('id', body.room_id)
+          .maybeSingle();
+
+        if (roomData?.property_id) {
+          const plan = pricingPlanService.getPropertyPlan(roomData.property_id);
+          if (plan) {
+            const calculated = pricingPlanService.calculatePrice(plan, {
+              startAt,
+              endAt,
+              guestCount,
+            });
+
+            const { data: updatedBooking, error: updatePriceErr } =
+              await supabaseAdmin
+                .from('bookings')
+                .update({
+                  subtotal: calculated.subtotal,
+                  discount: calculated.discount,
+                  tax: calculated.tax,
+                  total: calculated.total,
+                  currency: calculated.currency,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', booking.id)
+                .select()
+                .single();
+
+            if (!updatePriceErr && updatedBooking) {
+              booking = updatedBooking;
+            }
+          }
+        }
       }
 
       try {
@@ -232,7 +272,7 @@ export async function bookingsRoute(app: FastifyInstance) {
           payment_status,
           expires_at,
           notes,
-          cancellation_reason,
+          cancellation_reason:cancelled_reason,
           cancelled_at,
           created_at,
           updated_at
@@ -294,7 +334,7 @@ export async function bookingsRoute(app: FastifyInstance) {
           payment_status,
           expires_at,
           notes,
-          cancellation_reason,
+          cancellation_reason:cancelled_reason,
           cancelled_at,
           created_at,
           updated_at

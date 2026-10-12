@@ -628,6 +628,26 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/PropertyPatch'
+    put:
+      tags:
+      - Properties
+      security:
+      - bearerAuth: []
+      summary: Update own property (Host)
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PropertyPatch'
     delete:
       tags:
       - Properties
@@ -1632,6 +1652,26 @@ paths:
                 success: true
                 message: Operation completed successfully
     patch:
+      tags:
+      - Admin
+      security:
+      - bearerAuth: []
+      summary: Update property
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              example:
+                success: true
+                message: Operation completed successfully
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PropertyPatch'
+    put:
       tags:
       - Admin
       security:

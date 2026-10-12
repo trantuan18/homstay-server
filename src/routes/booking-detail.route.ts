@@ -86,7 +86,7 @@ export async function bookingDetailRoute(
           payment_status,
           expires_at,
           notes,
-          cancellation_reason,
+          cancellation_reason:cancelled_reason,
           cancelled_at,
           created_at,
           updated_at
