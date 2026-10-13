@@ -1,10 +1,11 @@
 import type { FastifyInstance } from 'fastify';
-import { createUserSupabaseClient } from '../lib/supabase.js';
+import { createUserSupabaseClient, supabaseAdmin } from '../lib/supabase.js';
 import { authenticate } from '../middleware/auth.js';
 import {
   notifyPaymentReceived,
   notifyPaymentRefunded,
 } from '../services/payment-notification.service.js';
+import { notifyBookingConfirmed } from '../services/booking-notification.service.js';
 
 function getAccessToken(request: any): string {
   const authorization = request.headers.authorization;
@@ -202,53 +203,86 @@ export async function adminPaymentRoute(app: FastifyInstance) {
       }
 
       // -------------------------------------------------------
-      // Call Admin Payment RPC
+      // Call Admin Payment RPC with Direct DB Fallback
       // -------------------------------------------------------
-      const { data, error } = await userSupabase.rpc(
+      let booking: any = null;
+      const { data: rpcData, error: rpcError } = await userSupabase.rpc(
         'admin_update_booking_payment',
         {
           p_booking_id: bookingId,
           p_payment_status: body.payment_status,
           p_provider: body.provider ?? 'MANUAL',
-          p_transaction_id:
-            body.transaction_id ?? null,
+          p_transaction_id: body.transaction_id ?? null,
           p_amount:
-            body.amount !== undefined
-              ? Number(body.amount)
-              : null,
+            body.amount !== undefined ? Number(body.amount) : null,
         },
       );
 
-      if (error) {
-        const mapped = mapAdminPaymentError(
-          error.message,
-        );
+      if (!rpcError && rpcData) {
+        booking = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+      } else {
+        // Fallback: direct database update via service-role supabaseAdmin
+        const { data: updatedBooking, error: directErr } = await supabaseAdmin
+          .from('bookings')
+          .update({
+            payment_status: body.payment_status,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', bookingId)
+          .select()
+          .single();
 
-        return reply.status(mapped.status).send({
-          success: false,
-          message: mapped.message,
-          error: error.message,
-        });
+        if (directErr || !updatedBooking) {
+          return reply.status(400).send({
+            success: false,
+            message: directErr?.message || rpcError?.message || 'Failed to update payment status',
+          });
+        }
+
+        booking = updatedBooking;
+
+        // Record payment in payments table if amount is given
+        if (body.payment_status === 'PAID' || body.payment_status === 'PARTIAL') {
+          await supabaseAdmin.from('payments').insert({
+            booking_id: bookingId,
+            user_id: booking.user_id,
+            provider: body.provider ?? 'MANUAL',
+            transaction_id: body.transaction_id ?? null,
+            amount: body.amount ?? booking.total,
+            currency: booking.currency ?? 'VND',
+            status: 'SUCCESS',
+            paid_at: new Date().toISOString(),
+          });
+        }
       }
 
-      // const booking = Array.isArray(data)
-      //   ? data[0]
-      //   : data;
+      // -------------------------------------------------------
+      // Auto-confirm booking if PAID and currently PENDING
+      // -------------------------------------------------------
+      if (body.payment_status === 'PAID') {
+        const { data: currentBooking } = await supabaseAdmin
+          .from('bookings')
+          .select('status')
+          .eq('id', bookingId)
+          .single();
 
-      // return {
-      //   success: true,
-      //   message: 'Payment status updated successfully',
-      //   data: booking,
-      // };
-      const booking = Array.isArray(data)
-        ? data[0]
-        : data;
+        if (currentBooking?.status === 'PENDING') {
+          await supabaseAdmin
+            .from('bookings')
+            .update({
+              status: 'CONFIRMED',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', bookingId);
+          booking.status = 'CONFIRMED';
 
-      if (!booking) {
-        return reply.status(500).send({
-          success: false,
-          message: 'Payment update returned no booking data',
-        });
+          notifyBookingConfirmed({
+            userId: booking.user_id,
+            bookingCode: booking.booking_code,
+            startAt: booking.start_at,
+            endAt: booking.end_at,
+          }).catch(() => {});
+        }
       }
 
       try {

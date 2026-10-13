@@ -97,6 +97,20 @@ function writeStore(store: PricingStore): void {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2), "utf-8");
+
+    // Also persist store snapshot to Supabase database (audit_logs)
+    void (async () => {
+      try {
+        await supabaseAdmin.from("audit_logs").insert({
+          action: "PRICING_STORE_SYNC",
+          entity_type: "PRICING_STORE",
+          entity_id: "global",
+          new_value: store,
+        });
+      } catch (err) {
+        console.error("Failed to backup pricing plans to database:", err);
+      }
+    })();
   } catch (err) {
     console.error("Error writing pricing plans store:", err);
   }

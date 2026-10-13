@@ -200,9 +200,24 @@ export async function adminBookingsRoute(app: FastifyInstance) {
         });
       }
 
+      const enriched = (data ?? []).map((b: any) => {
+        if (!b.property_id || !b.start_at || !b.end_at) return b;
+        const plan = pricingPlanService.getPropertyPlan(b.property_id);
+        if (!plan) return b;
+        const calculated = pricingPlanService.calculatePrice(plan, {
+          startAt: new Date(b.start_at),
+          endAt: new Date(b.end_at),
+          guestCount: b.guest_count || 1,
+        });
+        return {
+          ...b,
+          price_breakdown: calculated,
+        };
+      });
+
       return {
         success: true,
-        data,
+        data: enriched,
       };
     },
   );
@@ -259,9 +274,26 @@ export async function adminBookingsRoute(app: FastifyInstance) {
         });
       }
 
+      let enriched = data;
+      const propertyId = (data as any)?.property_id;
+      if (propertyId && (data as any)?.start_at && (data as any)?.end_at) {
+        const plan = pricingPlanService.getPropertyPlan(propertyId);
+        if (plan) {
+          const calculated = pricingPlanService.calculatePrice(plan, {
+            startAt: new Date((data as any).start_at),
+            endAt: new Date((data as any).end_at),
+            guestCount: (data as any).guest_count || 1,
+          });
+          enriched = {
+            ...data,
+            price_breakdown: calculated,
+          };
+        }
+      }
+
       return {
         success: true,
-        data,
+        data: enriched,
       };
     },
   );
@@ -338,6 +370,20 @@ export async function adminBookingsRoute(app: FastifyInstance) {
         bookingUserId = authData?.user?.id;
       }
 
+      const { data: roomData } = await supabaseAdmin
+        .from("rooms")
+        .select("id, capacity, property_id")
+        .eq("id", body.room_id)
+        .maybeSingle();
+
+      // Ensure room capacity accommodates the guest count to prevent DB RPC INVALID_GUEST_COUNT rejection
+      if (roomData && guestCount > (roomData.capacity ?? 0)) {
+        await supabaseAdmin
+          .from("rooms")
+          .update({ capacity: guestCount })
+          .eq("id", body.room_id);
+      }
+
       const { data, error } = await userSupabase.rpc("admin_create_booking", {
         p_user_id: bookingUserId,
         p_room_id: body.room_id,
@@ -362,40 +408,47 @@ export async function adminBookingsRoute(app: FastifyInstance) {
 
       let finalBooking = Array.isArray(data) ? data[0] : data;
 
-      if (finalBooking?.id) {
-        const { data: roomData } = await supabaseAdmin
-          .from("rooms")
-          .select("property_id")
-          .eq("id", body.room_id)
-          .maybeSingle();
+      if (finalBooking?.id && roomData?.property_id) {
+        const plan = pricingPlanService.getPropertyPlan(roomData.property_id);
+        if (plan) {
+          const calculated = pricingPlanService.calculatePrice(plan, {
+            startAt,
+            endAt,
+            guestCount,
+          });
 
-        if (roomData?.property_id) {
-          const plan = pricingPlanService.getPropertyPlan(roomData.property_id);
-          if (plan) {
-            const calculated = pricingPlanService.calculatePrice(plan, {
-              startAt,
-              endAt,
-              guestCount,
-            });
+          const feeBreakdownNote = `[Chi tiết phí] Tiền phòng: ${new Intl.NumberFormat("vi-VN").format(calculated.room_price)} ₫` +
+            (calculated.extra_guest_fee > 0
+              ? ` | Phụ thu khách thêm: +${new Intl.NumberFormat("vi-VN").format(calculated.extra_guest_fee)} ₫ (${calculated.extra_guest_count} khách, từ người thứ ${calculated.standard_guest_count + 1})`
+              : "") +
+            ` | Bảng giá: ${calculated.pricing_rule_name}`;
 
-            const { data: updatedBooking, error: updatePriceErr } =
-              await supabaseAdmin
-                .from("bookings")
-                .update({
-                  subtotal: calculated.subtotal,
-                  discount: calculated.discount,
-                  tax: calculated.tax,
-                  total: calculated.total,
-                  currency: calculated.currency,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq("id", finalBooking.id)
-                .select()
-                .single();
+          const combinedNotes = body.notes
+            ? `${body.notes}\n${feeBreakdownNote}`
+            : feeBreakdownNote;
 
-            if (!updatePriceErr && updatedBooking) {
-              finalBooking = updatedBooking;
-            }
+          const { data: updatedBooking, error: updatePriceErr } =
+            await supabaseAdmin
+              .from("bookings")
+              .update({
+                subtotal: calculated.subtotal,
+                discount: calculated.discount,
+                tax: calculated.tax,
+                total: calculated.total,
+                currency: calculated.currency,
+                host_note: feeBreakdownNote,
+                notes: combinedNotes,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", finalBooking.id)
+              .select()
+              .single();
+
+          if (!updatePriceErr && updatedBooking) {
+            finalBooking = {
+              ...updatedBooking,
+              price_breakdown: calculated,
+            };
           }
         }
       }
@@ -505,7 +558,7 @@ export async function adminBookingsRoute(app: FastifyInstance) {
     const validTransitions: Record<string, string[]> = {
       PENDING: ["CONFIRMED", "CANCELLED", "EXPIRED"],
       CONFIRMED: ["CHECKED_IN", "CANCELLED", "NO_SHOW"],
-      CHECKED_IN: ["CHECKED_OUT"],
+      CHECKED_IN: ["CHECKED_OUT", "CANCELLED"],
     };
 
     if (!isSuperAdmin && booking.status !== status) {

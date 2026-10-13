@@ -159,9 +159,30 @@ export async function adminUsersRoute(app: FastifyInstance) {
         });
       }
 
+      // Enrich with auth email
+      const emailMap: Record<string, string> = {};
+
+      if ((data ?? []).length > 0) {
+        try {
+          const { data: authUsersData } = await supabaseAdmin.auth.admin.listUsers({
+            perPage: 100,
+          });
+          if (authUsersData?.users) {
+            for (const au of authUsersData.users) {
+              if (au.email) {
+                emailMap[au.id] = au.email;
+              }
+            }
+          }
+        } catch {
+          // Fallback gracefully if auth list is restricted
+        }
+      }
+
       const users = (data ?? []).map((user: any) => ({
         id: user.id,
         full_name: user.full_name,
+        email: emailMap[user.id] ?? null,
         phone: user.phone,
         avatar_url: user.avatar_url,
         created_at: user.created_at,
@@ -325,25 +346,18 @@ export async function adminUsersRoute(app: FastifyInstance) {
       /**
        * Lấy role hiện tại để ghi audit.
        */
-      const {
-        data: currentRole,
-      } = await supabaseAdmin
+      const { data: currentRole } = await supabaseAdmin
         .from('user_roles')
         .select('role')
         .eq('user_id', id)
-        .single();
+        .maybeSingle();
 
-      if (!currentRole) {
-        return reply.code(404).send({
-          success: false,
-          message: 'USER_ROLE_NOT_FOUND',
-        });
-      }
+      const oldRole = currentRole?.role ?? 'CUSTOMER';
 
       /**
        * Không cần update nếu role không thay đổi.
        */
-      if (currentRole.role === newRole) {
+      if (currentRole && currentRole.role === newRole) {
         return reply.send({
           success: true,
           message: 'ROLE_ALREADY_SET',
@@ -355,7 +369,7 @@ export async function adminUsersRoute(app: FastifyInstance) {
       }
 
       /**
-       * Update role bằng service role.
+       * Update hoặc insert role bằng service role.
        * Không phụ thuộc RLS client.
        */
       const {
@@ -363,10 +377,14 @@ export async function adminUsersRoute(app: FastifyInstance) {
         error: updateError,
       } = await supabaseAdmin
         .from('user_roles')
-        .update({
-          role: newRole,
-        })
-        .eq('user_id', id)
+        .upsert(
+          {
+            user_id: id,
+            role: newRole,
+            created_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id' },
+        )
         .select('user_id, role, created_at')
         .single();
 
@@ -389,7 +407,7 @@ export async function adminUsersRoute(app: FastifyInstance) {
           entity_type: 'USER',
           entity_id: id,
           old_value: {
-            role: currentRole.role,
+            role: oldRole,
           },
           new_value: {
             role: newRole,

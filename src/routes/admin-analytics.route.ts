@@ -132,8 +132,9 @@ export async function adminAnalyticsRoute(
           created_at
         `,
         )
-        .gte('created_at', from.toISOString())
-        .lte('created_at', to.toISOString());
+        .or(
+          `and(created_at.gte.${from.toISOString()},created_at.lte.${to.toISOString()}),and(start_at.gte.${from.toISOString()},start_at.lte.${to.toISOString()})`,
+        );
 
       if (query.property_id) {
         bookingsQuery =
@@ -198,11 +199,12 @@ export async function adminAnalyticsRoute(
       }
 
       for (const booking of bookingRows) {
-        const date = getDateKey(
-          booking.created_at,
-        );
+        const stayDate = booking.start_at
+          ? getDateKey(booking.start_at)
+          : getDateKey(booking.created_at);
+        const createdDate = getDateKey(booking.created_at);
 
-        const day = dailyMap.get(date);
+        const day = dailyMap.get(stayDate) || dailyMap.get(createdDate);
 
         if (!day) continue;
 
@@ -233,7 +235,8 @@ export async function adminAnalyticsRoute(
         }
 
         if (
-          booking.payment_status === 'PAID'
+          booking.payment_status === 'PAID' ||
+          booking.payment_status === 'PARTIAL'
         ) {
           day.revenue += Number(
             booking.total ?? 0,
@@ -449,8 +452,8 @@ export async function adminAnalyticsRoute(
         bookingRows.reduce(
           (sum, booking) => {
             if (
-              booking.payment_status ===
-              'PAID'
+              booking.payment_status === 'PAID' ||
+              booking.payment_status === 'PARTIAL'
             ) {
               return (
                 sum +
@@ -471,7 +474,7 @@ export async function adminAnalyticsRoute(
       const confirmedBookings =
         bookingRows.filter(
           (b) =>
-            b.status === 'CONFIRMED',
+            ['CONFIRMED', 'CHECKED_IN', 'CHECKED_OUT'].includes(b.status),
         ).length;
 
       const cancelledBookings =

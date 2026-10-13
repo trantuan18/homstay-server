@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { supabase, createUserSupabaseClient } from "../lib/supabase.js";
+import { supabase, supabaseAdmin, createUserSupabaseClient } from "../lib/supabase.js";
 import { authenticate } from "../middleware/auth.js";
 
 const registerSchema = z.object({
@@ -249,30 +249,37 @@ export async function authRoute(app: FastifyInstance) {
         });
       }
 
-      const { data: profile, error: profileError } = await userClient
+      let { data: profile } = await userClient
         .from("profiles")
         .select("*")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
 
-      if (profileError) {
-        return reply.code(500).send({
-          success: false,
-          message: profileError.message,
-        });
+      if (!profile) {
+        const { data: adminProf } = await supabaseAdmin
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .maybeSingle();
+        profile = adminProf ?? {
+          id: user.id,
+          full_name: (user.email ? user.email.split("@")[0] : "") || "User",
+        };
       }
 
-      const { data: role, error: roleError } = await userClient
+      let { data: role } = await userClient
         .from("user_roles")
         .select("role")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
 
-      if (roleError) {
-        return reply.code(500).send({
-          success: false,
-          message: roleError.message,
-        });
+      if (!role) {
+        const { data: adminRole } = await supabaseAdmin
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        role = adminRole;
       }
 
       return reply.send({

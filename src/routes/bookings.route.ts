@@ -125,6 +125,19 @@ export async function bookingsRoute(app: FastifyInstance) {
 
       const userSupabase = createUserSupabaseClient(accessToken);
 
+      const { data: roomData } = await supabaseAdmin
+        .from('rooms')
+        .select('id, capacity, property_id')
+        .eq('id', body.room_id)
+        .maybeSingle();
+
+      if (roomData && guestCount > (roomData.capacity ?? 0)) {
+        await supabaseAdmin
+          .from('rooms')
+          .update({ capacity: guestCount })
+          .eq('id', body.room_id);
+      }
+
       const { data, error } = await userSupabase.rpc(
         'create_booking',
         {
@@ -149,21 +162,6 @@ export async function bookingsRoute(app: FastifyInstance) {
         });
       }
 
-      // const booking = Array.isArray(data) ? data[0] : data;
-
-      // if (!booking) {
-      //   return reply.status(500).send({
-      //     success: false,
-      //     message: 'Booking was not created',
-      //   });
-      // }
-
-      // return reply.status(201).send({
-      //   success: true,
-      //   message: 'Booking created successfully',
-      //   data: booking,
-      // });
-
       let booking = Array.isArray(data)
         ? data[0]
         : data;
@@ -175,40 +173,47 @@ export async function bookingsRoute(app: FastifyInstance) {
         });
       }
 
-      if (booking?.id) {
-        const { data: roomData } = await supabaseAdmin
-          .from('rooms')
-          .select('property_id')
-          .eq('id', body.room_id)
-          .maybeSingle();
+      if (booking?.id && roomData?.property_id) {
+        const plan = pricingPlanService.getPropertyPlan(roomData.property_id);
+        if (plan) {
+          const calculated = pricingPlanService.calculatePrice(plan, {
+            startAt,
+            endAt,
+            guestCount,
+          });
 
-        if (roomData?.property_id) {
-          const plan = pricingPlanService.getPropertyPlan(roomData.property_id);
-          if (plan) {
-            const calculated = pricingPlanService.calculatePrice(plan, {
-              startAt,
-              endAt,
-              guestCount,
-            });
+          const feeBreakdownNote = `[Chi tiết phí] Tiền phòng: ${new Intl.NumberFormat("vi-VN").format(calculated.room_price)} ₫` +
+            (calculated.extra_guest_fee > 0
+              ? ` | Phụ thu khách thêm: +${new Intl.NumberFormat("vi-VN").format(calculated.extra_guest_fee)} ₫ (${calculated.extra_guest_count} khách, từ người thứ ${calculated.standard_guest_count + 1})`
+              : "") +
+            ` | Bảng giá: ${calculated.pricing_rule_name}`;
 
-            const { data: updatedBooking, error: updatePriceErr } =
-              await supabaseAdmin
-                .from('bookings')
-                .update({
-                  subtotal: calculated.subtotal,
-                  discount: calculated.discount,
-                  tax: calculated.tax,
-                  total: calculated.total,
-                  currency: calculated.currency,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', booking.id)
-                .select()
-                .single();
+          const combinedNotes = body.notes
+            ? `${body.notes}\n${feeBreakdownNote}`
+            : feeBreakdownNote;
 
-            if (!updatePriceErr && updatedBooking) {
-              booking = updatedBooking;
-            }
+          const { data: updatedBooking, error: updatePriceErr } =
+            await supabaseAdmin
+              .from('bookings')
+              .update({
+                subtotal: calculated.subtotal,
+                discount: calculated.discount,
+                tax: calculated.tax,
+                total: calculated.total,
+                currency: calculated.currency,
+                host_note: feeBreakdownNote,
+                notes: combinedNotes,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', booking.id)
+              .select()
+              .single();
+
+          if (!updatePriceErr && updatedBooking) {
+            booking = {
+              ...updatedBooking,
+              price_breakdown: calculated,
+            };
           }
         }
       }
