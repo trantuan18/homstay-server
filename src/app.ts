@@ -6,7 +6,7 @@ import multipart from '@fastify/multipart';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 
-// import { healthRoute } from './routes/health.route.js';
+import { healthRoute } from './routes/health.route.js';
 import { authRoute } from './routes/auth.route.js';
 import { propertiesRoute } from './routes/properties.route.js';
 import { roomsRoute } from './routes/rooms.route.js';
@@ -72,7 +72,7 @@ export async function buildApp() {
     routePrefix: '/docs',
   });
 
-  // await app.register(healthRoute);
+  await app.register(healthRoute);
   await app.register(authRoute);
 
   await app.register(propertiesRoute);
