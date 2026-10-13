@@ -73,6 +73,12 @@ async function requireAdmin(
   };
 }
 
+function extractRole(userRoles: any): string | null {
+  if (!userRoles) return null;
+  if (Array.isArray(userRoles)) return userRoles[0]?.role ?? null;
+  return userRoles.role ?? null;
+}
+
 export async function adminUsersRoute(app: FastifyInstance) {
   /**
    * GET /api/admin/users
@@ -187,7 +193,7 @@ export async function adminUsersRoute(app: FastifyInstance) {
         avatar_url: user.avatar_url,
         created_at: user.created_at,
         updated_at: user.updated_at,
-        role: user.user_roles?.[0]?.role ?? null,
+        role: extractRole(user.user_roles),
       }));
 
       return reply.send({
@@ -260,9 +266,10 @@ export async function adminUsersRoute(app: FastifyInstance) {
           full_name: data.full_name,
           phone: data.phone,
           avatar_url: data.avatar_url,
-          role: data.user_roles?.[0]?.role ?? null,
-          role_created_at:
-            data.user_roles?.[0]?.created_at ?? null,
+          role: extractRole(data.user_roles),
+          role_created_at: Array.isArray(data.user_roles)
+            ? data.user_roles[0]?.created_at ?? null
+            : (data.user_roles as any)?.created_at ?? null,
           created_at: data.created_at,
           updated_at: data.updated_at,
         },
@@ -271,28 +278,52 @@ export async function adminUsersRoute(app: FastifyInstance) {
   );
 
   /**
-   * PATCH /api/admin/users/:id/role
-   * Change user role
+   * POST /api/admin/users
+   * Create user account (SUPER_ADMIN only)
    */
-  app.patch(
-    '/api/admin/users/:id/role',
+  app.post(
+    '/api/admin/users',
     { preHandler: authenticate },
     async (request, reply) => {
       const admin = await requireAdmin(request, reply);
-
       if (!admin) return;
 
-      const { id } = request.params as {
-        id: string;
-      };
+      if (admin.actorRole !== 'SUPER_ADMIN') {
+        return reply.code(403).send({
+          success: false,
+          message: 'SUPER_ADMIN_REQUIRED',
+        });
+      }
 
       const body = request.body as {
+        email?: string;
+        password?: string;
+        full_name?: string;
+        phone?: string;
         role?: string;
       };
 
-      const newRole = body?.role as Role;
+      const email = body?.email?.trim().toLowerCase();
+      const password = body?.password;
+      const full_name = body?.full_name?.trim() || '';
+      const phone = body?.phone?.trim() || null;
+      const role = (body?.role || 'CUSTOMER') as Role;
 
-      if (!VALID_ROLES.includes(newRole)) {
+      if (!email || !email.includes('@')) {
+        return reply.code(400).send({
+          success: false,
+          message: 'INVALID_EMAIL',
+        });
+      }
+
+      if (!password || password.length < 6) {
+        return reply.code(400).send({
+          success: false,
+          message: 'PASSWORD_MIN_6_CHARS',
+        });
+      }
+
+      if (!VALID_ROLES.includes(role)) {
         return reply.code(400).send({
           success: false,
           message: 'INVALID_ROLE',
@@ -300,128 +331,244 @@ export async function adminUsersRoute(app: FastifyInstance) {
         });
       }
 
-      /**
-       * Không cho admin tự đổi role của chính mình.
-       * Tránh trường hợp admin tự hạ quyền rồi mất quyền quản trị.
-       */
-      if (id === admin.actorId) {
-        return reply.code(400).send({
-          success: false,
-          message: 'CANNOT_CHANGE_OWN_ROLE',
-        });
-      }
-
-      /**
-       * Chỉ SUPER_ADMIN được cấp SUPER_ADMIN.
-       */
-      if (
-        newRole === 'SUPER_ADMIN' &&
-        admin.actorRole !== 'SUPER_ADMIN'
-      ) {
-        return reply.code(403).send({
-          success: false,
-          message: 'SUPER_ADMIN_REQUIRED',
-        });
-      }
-
-      /**
-       * Kiểm tra user tồn tại.
-       */
-      const {
-        data: targetUser,
-        error: targetUserError,
-      } = await supabaseAdmin
-        .from('profiles')
-        .select('id')
-        .eq('id', id)
-        .single();
-
-      if (targetUserError || !targetUser) {
-        return reply.code(404).send({
-          success: false,
-          message: 'USER_NOT_FOUND',
-        });
-      }
-
-      /**
-       * Lấy role hiện tại để ghi audit.
-       */
-      const { data: currentRole } = await supabaseAdmin
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', id)
-        .maybeSingle();
-
-      const oldRole = currentRole?.role ?? 'CUSTOMER';
-
-      /**
-       * Không cần update nếu role không thay đổi.
-       */
-      if (currentRole && currentRole.role === newRole) {
-        return reply.send({
-          success: true,
-          message: 'ROLE_ALREADY_SET',
-          data: {
-            user_id: id,
-            role: newRole,
+      // 1. Create auth user in Supabase Auth
+      const { data: newAuthUser, error: authError } =
+        await supabaseAdmin.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: {
+            full_name: full_name || email.split('@')[0],
           },
         });
+
+      if (authError || !newAuthUser?.user) {
+        return reply.code(400).send({
+          success: false,
+          message: authError?.message || 'USER_CREATION_FAILED',
+        });
       }
 
-      /**
-       * Update hoặc insert role bằng service role.
-       * Không phụ thuộc RLS client.
-       */
-      const {
-        data: updatedRole,
-        error: updateError,
-      } = await supabaseAdmin
+      const userId = newAuthUser.user.id;
+
+      // 2. Upsert profile
+      const { error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .upsert({
+          id: userId,
+          full_name: full_name || email.split('@')[0],
+          phone,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+      if (profileError) {
+        await supabaseAdmin.auth.admin.deleteUser(userId);
+        return reply.code(500).send({
+          success: false,
+          message: profileError.message,
+        });
+      }
+
+      // 3. Upsert user role
+      const { error: roleError } = await supabaseAdmin
         .from('user_roles')
         .upsert(
           {
-            user_id: id,
-            role: newRole,
+            user_id: userId,
+            role,
             created_at: new Date().toISOString(),
           },
           { onConflict: 'user_id' },
-        )
-        .select('user_id, role, created_at')
-        .single();
+        );
 
-      if (updateError || !updatedRole) {
+      if (roleError) {
         return reply.code(500).send({
           success: false,
-          message:
-            updateError?.message ?? 'ROLE_UPDATE_FAILED',
+          message: roleError.message,
         });
       }
 
-      /**
-       * Ghi audit log.
-       */
-      await supabaseAdmin
-        .from('audit_logs')
-        .insert({
-          user_id: admin.actorId,
-          action: 'UPDATE_USER_ROLE',
-          entity_type: 'USER',
-          entity_id: id,
-          old_value: {
-            role: oldRole,
-          },
-          new_value: {
-            role: newRole,
-          },
-        });
+      // 4. Audit log
+      await supabaseAdmin.from('audit_logs').insert({
+        user_id: admin.actorId,
+        action: 'CREATE_USER',
+        entity_type: 'USER',
+        entity_id: userId,
+        new_value: {
+          email,
+          full_name,
+          phone,
+          role,
+        },
+      });
 
-      return reply.send({
+      return reply.code(201).send({
         success: true,
-        message: 'ROLE_UPDATED',
+        message: 'USER_CREATED',
         data: {
-          user_id: updatedRole.user_id,
-          role: updatedRole.role,
+          id: userId,
+          email,
+          full_name: full_name || email.split('@')[0],
+          phone,
+          role,
+          created_at: new Date().toISOString(),
         },
       });
     },
   );
+
+  /**
+   * PATCH / PUT /api/admin/users/:id/role
+   * Change user role
+   */
+  const changeUserRoleHandler = async (request: any, reply: any) => {
+    const admin = await requireAdmin(request, reply);
+
+    if (!admin) return;
+
+    const { id } = request.params as {
+      id: string;
+    };
+
+    const body = request.body as {
+      role?: string;
+    };
+
+    const newRole = body?.role as Role;
+
+    if (!VALID_ROLES.includes(newRole)) {
+      return reply.code(400).send({
+        success: false,
+        message: 'INVALID_ROLE',
+        valid_roles: VALID_ROLES,
+      });
+    }
+
+    /**
+     * Không cho admin tự đổi role của chính mình.
+     * Tránh trường hợp admin tự hạ quyền rồi mất quyền quản trị.
+     */
+    if (id === admin.actorId) {
+      return reply.code(400).send({
+        success: false,
+        message: 'CANNOT_CHANGE_OWN_ROLE',
+      });
+    }
+
+    /**
+     * Chỉ SUPER_ADMIN được cấp SUPER_ADMIN.
+     */
+    if (
+      newRole === 'SUPER_ADMIN' &&
+      admin.actorRole !== 'SUPER_ADMIN'
+    ) {
+      return reply.code(403).send({
+        success: false,
+        message: 'SUPER_ADMIN_REQUIRED',
+      });
+    }
+
+    /**
+     * Kiểm tra user tồn tại.
+     */
+    const {
+      data: targetUser,
+      error: targetUserError,
+    } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('id', id)
+      .single();
+
+    if (targetUserError || !targetUser) {
+      return reply.code(404).send({
+        success: false,
+        message: 'USER_NOT_FOUND',
+      });
+    }
+
+    /**
+     * Lấy role hiện tại để ghi audit.
+     */
+    const { data: currentRole } = await supabaseAdmin
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', id)
+      .maybeSingle();
+
+    const oldRole = currentRole?.role ?? 'CUSTOMER';
+
+    /**
+     * Không cần update nếu role không thay đổi.
+     */
+    if (currentRole && currentRole.role === newRole) {
+      return reply.send({
+        success: true,
+        message: 'ROLE_ALREADY_SET',
+        data: {
+          user_id: id,
+          role: newRole,
+        },
+      });
+    }
+
+    /**
+     * Update hoặc insert role bằng service role.
+     * Không phụ thuộc RLS client.
+     */
+    const {
+      data: updatedRole,
+      error: updateError,
+    } = await supabaseAdmin
+      .from('user_roles')
+      .upsert(
+        {
+          user_id: id,
+          role: newRole,
+          created_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' },
+      )
+      .select('user_id, role, created_at')
+      .single();
+
+    if (updateError || !updatedRole) {
+      return reply.code(500).send({
+        success: false,
+        message:
+          updateError?.message ?? 'ROLE_UPDATE_FAILED',
+      });
+    }
+
+    /**
+     * Ghi audit log.
+     */
+    await supabaseAdmin
+      .from('audit_logs')
+      .insert({
+        user_id: admin.actorId,
+        action: 'UPDATE_USER_ROLE',
+        entity_type: 'USER',
+        entity_id: id,
+        old_value: {
+          role: oldRole,
+        },
+        new_value: {
+          role: newRole,
+        },
+      });
+
+    return reply.send({
+      success: true,
+      message: 'ROLE_UPDATED',
+      data: {
+        user_id: updatedRole.user_id,
+        role: updatedRole.role,
+      },
+    });
+  };
+
+  app.patch('/api/admin/users/:id/role', { preHandler: authenticate }, changeUserRoleHandler);
+  app.put('/api/admin/users/:id/role', { preHandler: authenticate }, changeUserRoleHandler);
 }
