@@ -10,6 +10,7 @@ import {
 
 import { authenticate } from "../middleware/auth.js";
 import { pricingPlanService } from "../services/pricing-plan.service.js";
+import { cleaningStatusService } from "../services/cleaning-status.service.js";
 
 function getAccessToken(request: any): string {
   const authorization = request.headers.authorization;
@@ -201,9 +202,12 @@ export async function adminBookingsRoute(app: FastifyInstance) {
       }
 
       const enriched = (data ?? []).map((b: any) => {
-        if (!b.property_id || !b.start_at || !b.end_at) return b;
+        const cleaning_status = cleaningStatusService.get(b.id) || b.cleaning_status || "UNCLEANED";
+        if (!b.property_id || !b.start_at || !b.end_at) {
+          return { ...b, cleaning_status };
+        }
         const plan = pricingPlanService.getPropertyPlan(b.property_id);
-        if (!plan) return b;
+        if (!plan) return { ...b, cleaning_status };
         const calculated = pricingPlanService.calculatePrice(plan, {
           startAt: new Date(b.start_at),
           endAt: new Date(b.end_at),
@@ -211,6 +215,7 @@ export async function adminBookingsRoute(app: FastifyInstance) {
         });
         return {
           ...b,
+          cleaning_status,
           price_breakdown: calculated,
         };
       });
@@ -274,7 +279,11 @@ export async function adminBookingsRoute(app: FastifyInstance) {
         });
       }
 
-      let enriched = data;
+      const cleaning_status = cleaningStatusService.get(data.id) || (data as any).cleaning_status || "UNCLEANED";
+      let enriched: any = {
+        ...data,
+        cleaning_status,
+      };
       const propertyId = (data as any)?.property_id;
       if (propertyId && (data as any)?.start_at && (data as any)?.end_at) {
         const plan = pricingPlanService.getPropertyPlan(propertyId);
@@ -285,7 +294,7 @@ export async function adminBookingsRoute(app: FastifyInstance) {
             guestCount: (data as any).guest_count || 1,
           });
           enriched = {
-            ...data,
+            ...enriched,
             price_breakdown: calculated,
           };
         }
@@ -749,4 +758,30 @@ export async function adminBookingsRoute(app: FastifyInstance) {
       };
     },
   );
+
+  // =========================================================
+  // UPDATE CLEANING STATUS
+  // =========================================================
+  app.patch(
+    "/api/admin/bookings/:id/cleaning-status",
+    {
+      preHandler: authenticate,
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { cleaning_status?: "UNCLEANED" | "CLEANED" };
+      const status = body.cleaning_status === "CLEANED" ? "CLEANED" : "UNCLEANED";
+
+      const updated = await cleaningStatusService.set(id, status);
+
+      return reply.send({
+        success: true,
+        data: {
+          id,
+          cleaning_status: updated,
+        },
+      });
+    },
+  );
 }
+

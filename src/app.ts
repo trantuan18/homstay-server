@@ -43,6 +43,24 @@ export async function buildApp() {
     origin: true,
   });
 
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (req, body, done) => {
+      const str = typeof body === 'string' ? body : body?.toString('utf-8');
+      if (!str || str.trim() === '') {
+        done(null, {});
+        return;
+      }
+      try {
+        done(null, JSON.parse(str));
+      } catch (err: any) {
+        err.statusCode = 400;
+        done(err, undefined);
+      }
+    },
+  );
+
   await app.register(multipart, {
     limits: {
       fileSize: 5 * 1024 * 1024,

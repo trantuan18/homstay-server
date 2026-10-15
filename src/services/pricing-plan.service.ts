@@ -33,6 +33,9 @@ export interface PricingPlan {
   extra_guest_fee: number; // 100000 / người / phòng / đêm
   holiday_surcharge: number; // 100000 / phòng / đêm
 
+  // Giá linh hoạt (% tăng hoặc giảm: ví dụ +10 hoặc -15)
+  flexible_rate_percent?: number;
+
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +68,7 @@ const defaultInitialPlan: PricingPlan = {
   standard_guest_count: 2,
   extra_guest_fee: 100000,
   holiday_surcharge: 100000,
+  flexible_rate_percent: 0,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };
@@ -164,6 +168,7 @@ export const pricingPlanService = {
       standard_guest_count: Number(payload.standard_guest_count) || 3,
       extra_guest_fee: Number(payload.extra_guest_fee) || 100000,
       holiday_surcharge: Number(payload.holiday_surcharge) || 100000,
+      flexible_rate_percent: Number(payload.flexible_rate_percent) || 0,
       created_at: now,
       updated_at: now,
     };
@@ -188,6 +193,10 @@ export const pricingPlanService = {
     const updated: PricingPlan = {
       ...existing,
       ...payload,
+      flexible_rate_percent:
+        payload.flexible_rate_percent !== undefined
+          ? Number(payload.flexible_rate_percent)
+          : (existing.flexible_rate_percent || 0),
       id,
       updated_at: new Date().toISOString(),
     };
@@ -259,62 +268,153 @@ export const pricingPlanService = {
     );
     const durationHours = durationMinutes / 60;
 
-    // Day of week: 0 = CN, 1 = T2, 2 = T3, 3 = T4, 4 = T5, 5 = T6, 6 = T7
-    const dayOfWeek = startAt.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 5 || dayOfWeek === 6;
-
-    let subtotal = 0;
-    let ruleLabel = "";
-
-    // 1. Kiểm tra thuê qua đêm:
-    // Thường nhận phòng từ 21:00 - 01:00 và trả phòng 07:00 - 11:00 sáng hôm sau (7h - 13h)
     const startHour = startAt.getHours();
     const endHour = endAt.getHours();
+
+    // Helper: kiểm tra đêm cuối tuần (T6, T7, CN)
+    const isWeekendNight = (d: Date) => {
+      const day = d.getDay();
+      return day === 5 || day === 6 || day === 0; // T6, T7, CN
+    };
+
+    let baseSubtotal = 0;
+    let ruleLabel = "";
+    let stayType: "HOURLY" | "OVERNIGHT" | "DAILY" | "MULTI_DAY" = "HOURLY";
+    let nightsCount = 0;
+
+    // Tính số ngày chênh lệch lịch giữa ngày nhận và ngày trả
+    const dStart = new Date(startAt.getFullYear(), startAt.getMonth(), startAt.getDate());
+    const dEnd = new Date(endAt.getFullYear(), endAt.getMonth(), endAt.getDate());
+    const calendarDaysDiff = Math.max(0, Math.round((dEnd.getTime() - dStart.getTime()) / (1000 * 60 * 60 * 24)));
+
+    // 1. Kiểm tra hình thức thuê THEO NGÀY ĐÊM (Daily stay hoặc Multi-day stay)
+    // Áp dụng khi khách ở >= 24h, hoặc có chuyển ngày và thời lượng >= 16h, hoặc rơi vào khung check-in trưa/chiều (12h-16h) và check-out trưa hôm sau (9h-14h)
+    const isDailyOrMultiDay =
+      durationHours >= 24 ||
+      (calendarDaysDiff >= 1 && durationHours >= 16) ||
+      (calendarDaysDiff >= 1 && startHour >= 12 && startHour <= 16 && endHour >= 9 && endHour <= 14);
+
+    // 2. Kiểm tra hình thức thuê QUA ĐÊM (Overnight)
+    // Nhận phòng tối/đêm (>= 20:00 hoặc <= 02:00 sáng hôm sau), trả phòng sáng hôm sau (<= 12:00 trưa), thời lượng 6h - 15h
     const isOvernightTime =
-      (startHour >= 21 || startHour <= 1) &&
-      endHour >= 7 &&
-      endHour <= 11 &&
-      durationHours >= 7 &&
-      durationHours <= 14;
+      !isDailyOrMultiDay &&
+      calendarDaysDiff >= 1 &&
+      (startHour >= 20 || startHour <= 2) &&
+      endHour >= 6 &&
+      endHour <= 12 &&
+      durationHours >= 6 &&
+      durationHours <= 15;
 
-    // 2. Kiểm tra combo ngày đêm:
-    // Thường nhận phòng 13:00 - 15:00 và trả phòng 10:00 - 13:00 hôm sau (19h - 25h)
-    const isDailyStay =
-      durationHours >= 18 &&
-      durationHours <= 26 &&
-      startHour >= 12 &&
-      startHour <= 16;
+    if (isDailyOrMultiDay) {
+      // Số đêm lưu trú: tối thiểu 1 đêm
+      nightsCount = Math.max(1, calendarDaysDiff);
+      if (durationHours > nightsCount * 24 + 4) {
+        nightsCount = Math.ceil(durationHours / 24);
+      }
 
-    if (isDailyStay) {
-      subtotal = isWeekend
-        ? plan.daily_weekend_price
-        : plan.daily_weekday_price;
-      ruleLabel = `Combo ngày đêm (${isWeekend ? "T6-CN" : "T2-T5"})`;
+      stayType = nightsCount > 1 ? "MULTI_DAY" : "DAILY";
+      let weekdayNights = 0;
+      let weekendNights = 0;
+
+      // Duyệt qua từng đêm để tính giá chuẩn xác từng đêm theo ngày thường vs cuối tuần
+      for (let i = 0; i < nightsCount; i++) {
+        const nightDate = new Date(dStart.getTime() + i * 24 * 60 * 60 * 1000);
+        if (isWeekendNight(nightDate)) {
+          weekendNights++;
+          baseSubtotal += (plan.daily_weekend_price || plan.daily_weekday_price || 0);
+        } else {
+          weekdayNights++;
+          baseSubtotal += (plan.daily_weekday_price || 0);
+        }
+      }
+
+      if (nightsCount === 1) {
+        const isWk = weekendNights > 0;
+        ruleLabel = `Combo ngày đêm (${isWk ? "Cuối tuần T6-CN" : "Trong tuần T2-T5"})`;
+      } else {
+        ruleLabel = `Theo ngày (${nightsCount} đêm: ${weekdayNights} ngày thường, ${weekendNights} cuối tuần)`;
+      }
+
+      // Xử lý phụ thu trả muộn / nhận sớm cho gói ngày đêm nếu vượt quá 2 tiếng
+      const expectedCheckIn = 14;
+      const expectedCheckOut = 12;
+      const earlyHours = startHour < expectedCheckIn ? Math.max(0, expectedCheckIn - startHour) : 0;
+      const lateHours = endHour > expectedCheckOut ? Math.max(0, endHour - expectedCheckOut) : 0;
+      const extraStayHours = Math.max(0, Math.round(durationHours - nightsCount * 22));
+
+      if (extraStayHours >= 2 && nightsCount === 1 && earlyHours + lateHours > 0) {
+        const extraHoursCharge = Math.min(
+          (earlyHours + lateHours) * (plan.hourly_next_price || 50000),
+          Math.round((plan.daily_weekday_price || 500000) * 0.5) // tối đa 50% tiền phòng
+        );
+        if (extraHoursCharge > 0) {
+          baseSubtotal += extraHoursCharge;
+          ruleLabel += ` + Phụ trội giờ (${earlyHours + lateHours}h)`;
+        }
+      }
     } else if (isOvernightTime) {
-      subtotal = isWeekend
-        ? plan.overnight_weekend_price
-        : plan.overnight_weekday_price;
-      ruleLabel = `Giá qua đêm (${isWeekend ? "T6-CN" : "T2-T5"})`;
-    } else if (durationHours >= 3.5 && durationHours <= 4.5) {
-      subtotal = plan.combo_4h_price;
-      ruleLabel = "Combo 4 giờ";
-    } else if (durationHours >= 7.5 && durationHours <= 8.5) {
-      subtotal = plan.combo_8h_price;
-      ruleLabel = "Combo 8 giờ";
+      stayType = "OVERNIGHT";
+      nightsCount = 1;
+      const isWeekend = isWeekendNight(startAt);
+      baseSubtotal = isWeekend
+        ? (plan.overnight_weekend_price || plan.overnight_weekday_price || 0)
+        : (plan.overnight_weekday_price || 0);
+      ruleLabel = `Giá qua đêm (${isWeekend ? "Cuối tuần T6-CN" : "Trong tuần T2-T5"})`;
     } else {
-      // Giờ lẻ thông thường
+      // 3. THUÊ THEO GIỜ LẺ & COMBO
+      stayType = "HOURLY";
+      nightsCount = 0;
+
+      // Tính giá theo giờ lẻ tiêu chuẩn
+      let hourlyStandardPrice = 0;
       if (durationHours <= plan.hourly_first_hours) {
-        subtotal = plan.hourly_first_price;
-        ruleLabel = `Giờ lẻ (${plan.hourly_first_hours}h đầu)`;
+        hourlyStandardPrice = plan.hourly_first_price;
       } else {
         const extraHours = Math.ceil(durationHours - plan.hourly_first_hours);
-        subtotal =
-          plan.hourly_first_price + extraHours * plan.hourly_next_price;
-        ruleLabel = `Giờ lẻ (${plan.hourly_first_hours}h đầu + ${extraHours}h tiếp theo)`;
+        hourlyStandardPrice = plan.hourly_first_price + extraHours * plan.hourly_next_price;
       }
+
+      // Xem xét combo 4h và combo 8h nếu tiết kiệm hơn cho khách
+      let bestPrice = hourlyStandardPrice;
+      let bestRule = durationHours <= plan.hourly_first_hours
+        ? `Giờ lẻ (${plan.hourly_first_hours}h đầu)`
+        : `Giờ lẻ (${plan.hourly_first_hours}h đầu + ${Math.ceil(durationHours - plan.hourly_first_hours)}h tiếp theo)`;
+
+      if (durationHours >= 3.0 && durationHours <= 5.0 && plan.combo_4h_price) {
+        const extraOver4h = durationHours > 4 ? Math.ceil(durationHours - 4) * plan.hourly_next_price : 0;
+        const combo4hTotal = plan.combo_4h_price + extraOver4h;
+        if (combo4hTotal <= bestPrice) {
+          bestPrice = combo4hTotal;
+          bestRule = extraOver4h > 0 ? `Combo 4 giờ (+${Math.ceil(durationHours - 4)}h phụ trội)` : "Combo 4 giờ";
+        }
+      }
+
+      if (durationHours >= 6.5 && durationHours <= 9.5 && plan.combo_8h_price) {
+        const extraOver8h = durationHours > 8 ? Math.ceil(durationHours - 8) * plan.hourly_next_price : 0;
+        const combo8hTotal = plan.combo_8h_price + extraOver8h;
+        if (combo8hTotal <= bestPrice) {
+          bestPrice = combo8hTotal;
+          bestRule = extraOver8h > 0 ? `Combo 8 giờ (+${Math.ceil(durationHours - 8)}h phụ trội)` : "Combo 8 giờ";
+        }
+      }
+
+      // Trần giá (Price Cap): Tiền giờ không được vượt quá giá nguyên ngày đêm hôm đó
+      const dayCap = isWeekendNight(startAt) ? plan.daily_weekend_price : plan.daily_weekday_price;
+      if (dayCap && bestPrice > dayCap) {
+        bestPrice = dayCap;
+        bestRule = "Trọn gói trong ngày (Chạm mức tối đa ngày)";
+      }
+
+      baseSubtotal = bestPrice;
+      ruleLabel = bestRule;
     }
 
-    // 3. Phụ thu khách thêm
+    // 4. Điều chỉnh giá linh hoạt (% tăng hoặc giảm)
+    const flexibleRatePercent = Number(plan.flexible_rate_percent || 0);
+    const flexibleAdjustment = Math.round(baseSubtotal * (flexibleRatePercent / 100));
+    const adjustedSubtotal = Math.max(0, baseSubtotal + flexibleAdjustment);
+
+    // 5. Phụ thu khách thêm (tính theo số đêm nếu ở theo ngày, hoặc tính 1 lần nếu theo giờ/1 đêm)
     const standardGuests =
       plan.standard_guest_count !== undefined
         ? Number(plan.standard_guest_count)
@@ -323,14 +423,28 @@ export const pricingPlanService = {
     let extraGuestFee = 0;
     if (guestCount > standardGuests) {
       extraGuests = guestCount - standardGuests;
-      extraGuestFee = extraGuests * (plan.extra_guest_fee || 100000);
+      const nightMultiplier = Math.max(1, nightsCount);
+      extraGuestFee = extraGuests * (plan.extra_guest_fee || 100000) * nightMultiplier;
     }
 
-    const total = subtotal + extraGuestFee;
+    const total = adjustedSubtotal + extraGuestFee;
+
+    const percentText = flexibleRatePercent > 0 ? `+${flexibleRatePercent}%` : `${flexibleRatePercent}%`;
+    const pricingRuleName =
+      flexibleRatePercent !== 0
+        ? `${plan.name} — ${ruleLabel} (${percentText})`
+        : `${plan.name} — ${ruleLabel}`;
 
     return {
-      subtotal,
-      room_price: subtotal,
+      subtotal: adjustedSubtotal,
+      room_price: adjustedSubtotal,
+      base_subtotal: baseSubtotal,
+      stay_type: stayType,
+      nights_count: nightsCount,
+      duration_hours: Math.round(durationHours * 10) / 10,
+      duration_minutes: durationMinutes,
+      flexible_rate_percent: flexibleRatePercent,
+      flexible_rate_adjustment: flexibleAdjustment,
       standard_guest_count: standardGuests,
       extra_guest_count: extraGuests,
       extra_guest_fee: extraGuestFee,
@@ -339,8 +453,7 @@ export const pricingPlanService = {
       discount: 0,
       tax: 0,
       total,
-      duration_minutes: durationMinutes,
-      pricing_rule_name: `${plan.name} — ${ruleLabel}`,
+      pricing_rule_name: pricingRuleName,
       currency: "VND",
     };
   },
@@ -367,10 +480,11 @@ export const pricingPlanService = {
       const roomIds = rooms.map((r) => r.id);
 
       if (plan) {
+        const flexFactor = 1 + (Number(plan.flexible_rate_percent) || 0) / 100;
         const hourlyRate = Math.round(
-          plan.hourly_first_price / Math.max(1, plan.hourly_first_hours),
+          (plan.hourly_first_price / Math.max(1, plan.hourly_first_hours)) * flexFactor,
         );
-        const dailyRate = plan.daily_weekday_price;
+        const dailyRate = Math.round(plan.daily_weekday_price * flexFactor);
 
         // 1. Update rooms base prices in Supabase database
         for (const room of rooms) {

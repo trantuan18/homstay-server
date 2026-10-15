@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { authenticate } from '../middleware/auth.js';
 import { createUserSupabaseClient } from '../lib/supabase.js';
+import { cleaningStatusService } from '../services/cleaning-status.service.js';
 
 export async function bookingDetailRoute(
   app: FastifyInstance,
@@ -257,7 +258,10 @@ export async function bookingDetailRoute(
         success: true,
 
         data: {
-          booking,
+          booking: {
+            ...booking,
+            cleaning_status: cleaningStatusService.get(booking.id) || (booking as any).cleaning_status || "UNCLEANED",
+          },
 
           property,
 

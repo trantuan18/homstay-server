@@ -1,15 +1,37 @@
 import type { FastifyInstance } from "fastify";
-import { createUserSupabaseClient } from "../lib/supabase.js";
+import { createUserSupabaseClient, supabaseAdmin } from "../lib/supabase.js";
 import { authenticate } from "../middleware/auth.js";
 import { pricingPlanService } from "../services/pricing-plan.service.js";
 
 export async function adminPricingPlansRoute(app: FastifyInstance) {
-  async function requireAdmin(accessToken: string) {
-    const userClient = createUserSupabaseClient(accessToken);
-    const { data, error } = await userClient.rpc("is_admin");
-    if (error || data !== true) {
-      throw new Error("ADMIN_REQUIRED");
+  async function requireAdmin(request: any) {
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, "");
+    if (!token) throw new Error("UNAUTHORIZED");
+
+    try {
+      const userClient = createUserSupabaseClient(token);
+      const { data, error } = await userClient.rpc("is_admin");
+      if (!error && data === true) {
+        return;
+      }
+    } catch {
+      // Fall through to database check
     }
+
+    const actorId = request.user?.id;
+    if (actorId) {
+      const { data: roleRow } = await supabaseAdmin
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", actorId)
+        .single();
+
+      if (roleRow && ["SUPER_ADMIN", "ADMIN", "STAFF"].includes(roleRow.role)) {
+        return;
+      }
+    }
+
+    throw new Error("ADMIN_REQUIRED");
   }
 
   // GET /api/admin/pricing-plans
@@ -18,9 +40,7 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token = request.headers.authorization?.replace("Bearer ", "");
-        if (!token) return reply.status(401).send({ success: false, message: "Missing token" });
-        await requireAdmin(token);
+        await requireAdmin(request);
 
         const plans = pricingPlanService.list();
         return reply.send({
@@ -30,6 +50,9 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
       } catch (err: any) {
         if (err?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({ success: false, message: "Admin access required" });
+        }
+        if (err?.message === "UNAUTHORIZED") {
+          return reply.status(401).send({ success: false, message: "Missing token" });
         }
         return reply.status(500).send({ success: false, message: err?.message || "Internal error" });
       }
@@ -42,9 +65,7 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token = request.headers.authorization?.replace("Bearer ", "");
-        if (!token) return reply.status(401).send({ success: false, message: "Missing token" });
-        await requireAdmin(token);
+        await requireAdmin(request);
 
         const { id } = request.params as { id: string };
         const plan = pricingPlanService.getById(id);
@@ -60,6 +81,9 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
         if (err?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({ success: false, message: "Admin access required" });
         }
+        if (err?.message === "UNAUTHORIZED") {
+          return reply.status(401).send({ success: false, message: "Missing token" });
+        }
         return reply.status(500).send({ success: false, message: err?.message || "Internal error" });
       }
     },
@@ -71,9 +95,7 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token = request.headers.authorization?.replace("Bearer ", "");
-        if (!token) return reply.status(401).send({ success: false, message: "Missing token" });
-        await requireAdmin(token);
+        await requireAdmin(request);
 
         const body = request.body as any;
         if (!body.name?.trim()) {
@@ -81,6 +103,12 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
         }
 
         const newPlan = pricingPlanService.create(body);
+
+        // Async sync in background to prevent timeout
+        void pricingPlanService.syncAllPropertiesToDatabase().catch((e) => {
+          console.error("Background sync all properties error:", e);
+        });
+
         return reply.status(201).send({
           success: true,
           data: newPlan,
@@ -88,6 +116,9 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
       } catch (err: any) {
         if (err?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({ success: false, message: "Admin access required" });
+        }
+        if (err?.message === "UNAUTHORIZED") {
+          return reply.status(401).send({ success: false, message: "Missing token" });
         }
         return reply.status(500).send({ success: false, message: err?.message || "Internal error" });
       }
@@ -100,9 +131,7 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token = request.headers.authorization?.replace("Bearer ", "");
-        if (!token) return reply.status(401).send({ success: false, message: "Missing token" });
-        await requireAdmin(token);
+        await requireAdmin(request);
 
         const { id } = request.params as { id: string };
         const body = request.body as any;
@@ -112,7 +141,10 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
           return reply.status(404).send({ success: false, message: "Pricing plan not found" });
         }
 
-        await pricingPlanService.syncAllPropertiesToDatabase();
+        // Async sync in background to prevent timeout
+        void pricingPlanService.syncAllPropertiesToDatabase().catch((e) => {
+          console.error("Background sync all properties error:", e);
+        });
 
         return reply.send({
           success: true,
@@ -121,6 +153,9 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
       } catch (err: any) {
         if (err?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({ success: false, message: "Admin access required" });
+        }
+        if (err?.message === "UNAUTHORIZED") {
+          return reply.status(401).send({ success: false, message: "Missing token" });
         }
         return reply.status(500).send({ success: false, message: err?.message || "Internal error" });
       }
@@ -133,9 +168,7 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
     { preHandler: authenticate },
     async (request, reply) => {
       try {
-        const token = request.headers.authorization?.replace("Bearer ", "");
-        if (!token) return reply.status(401).send({ success: false, message: "Missing token" });
-        await requireAdmin(token);
+        await requireAdmin(request);
 
         const { id } = request.params as { id: string };
         const ok = pricingPlanService.remove(id);
@@ -143,7 +176,10 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
           return reply.status(404).send({ success: false, message: "Pricing plan not found" });
         }
 
-        await pricingPlanService.syncAllPropertiesToDatabase();
+        // Async sync in background to prevent timeout
+        void pricingPlanService.syncAllPropertiesToDatabase().catch((e) => {
+          console.error("Background sync all properties error:", e);
+        });
 
         return reply.send({
           success: true,
@@ -152,6 +188,9 @@ export async function adminPricingPlansRoute(app: FastifyInstance) {
       } catch (err: any) {
         if (err?.message === "ADMIN_REQUIRED") {
           return reply.status(403).send({ success: false, message: "Admin access required" });
+        }
+        if (err?.message === "UNAUTHORIZED") {
+          return reply.status(401).send({ success: false, message: "Missing token" });
         }
         return reply.status(500).send({ success: false, message: err?.message || "Internal error" });
       }
